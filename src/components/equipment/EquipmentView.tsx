@@ -404,7 +404,7 @@ export default function EquipmentView() {
         <EmptyState
           icon={Server}
           title="暂无设备记录"
-          description="请点击"新建设备"按钮添加第一台凿岩机设备档案。"
+          description={'请点击"新建设备"按钮添加第一台凿岩机设备档案。'}
           action={{ label: '新建设备', onClick: handleCreate }}
         />
       ) : (
