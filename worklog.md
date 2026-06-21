@@ -379,3 +379,64 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 - [ ] CRUD 全流程端到端测试
 - [ ] 零件编号唯一性校验（新建/编辑）
 - [ ] 有关联检测数据时删除拒绝
+
+---
+
+## Spec-007 - 检测参数模板管理
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/app/api/parameter-templates/route.ts` | GET（列表含 items）/ POST（新建+复制）/ PUT（编辑含全量同步 items）/ DELETE（级联删除+检测数据检查） |
+| `src/components/templates/TemplateEditor.tsx` | 参数项编辑器 Dialog：11 列网格行 + 原生拖拽排序 + 增删改 + 批量复制模板 Dialog |
+| `src/components/templates/TemplateView.tsx` | 模板列表页 + 4 个 StatCard + 新建模板 Dialog + 编辑/删除/复制 |
+| `src/components/templates/TemplatesView.tsx` | 更新入口：从 PlaceholderView 切换为 TemplateView |
+
+### 功能实现
+
+1. **PageHeader** — 标题 + 描述 + "新建模板"按钮（无可用类别时 disabled）
+2. **4 个 StatCard** — 模板总数、参数项总数（含平均）、已配置类别、未配置类别
+3. **模板列表 Table** — 序号、类别编码（Badge mono）、类别名称、模板名称、版本号（Badge vN）、参数项数（胶囊）、参数项概览（前 5 项名称 Badge + 溢出计数）
+4. **新建模板 Dialog** — 选择未配置模板的类别 + 输入名称 → 创建空白模板后自动打开编辑器
+5. **TemplateEditor Dialog**（核心）：
+   - 顶部元数据栏：模板名称 + 版本号 + "复制模板"按钮
+   - 11 列参数项网格：拖拽手柄+序号、编码（mono）、名称、类型（Select：数值/文本/布尔/选项）、单位、标准上下限、最优上下限、选项值
+   - 数据类型联动：非 number 类型时禁用单位/区间输入；option 类型时启用选项值
+   - 原生 HTML5 Drag & Drop 排序（dragCounter 处理子元素事件冒泡）
+   - 添加参数项 / 删除参数项
+   - 保存：PUT 全量同步 items（deleteMany + create）
+6. **复制模板 Dialog** — 选择目标类别 + 新名称 → POST 创建
+7. **删除确认** — ConfirmDialog（destructive），后端检查关联 inspection_data_item
+8. **空状态 / 骨架屏 / 错误条**
+
+### API 设计
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/parameter-templates` | 全量列表，含 category + items（按 sort_order 排序） |
+| POST | `/api/parameter-templates` | 新建（含 items 数组批量创建），校验 category 唯一性 409 |
+| PUT | `/api/parameter-templates` | 编辑（items 全量同步：deleteAll + create），支持仅更新 name/version |
+| DELETE | `/api/parameter-templates?id=xxx` | 删除，检查关联 inspection_data_item 数，有数据返回 409 |
+
+### 验收标准对照
+
+| 验收项 | 实现方式 | 状态 |
+|--------|---------|------|
+| 按类别展示模板列表 | Table 含类别编码/名称 | ✅ |
+| 显示类别名称、模板名称、参数项数量、版本号 | 4 列 + 参数项概览 | ✅ |
+| 展示参数项、增删改 | TemplateEditor 11 列网格行 | ✅ |
+| 参数名称、编码、单位、数据类型 | 4 个编辑字段 | ✅ |
+| 标准区间（min/max）、最优区间（min/max） | 4 个 number 输入 | ✅ |
+| 排序号 | 拖拽自动重排 sort_order | ✅ |
+| 支持批量复制模板 | 复制 Dialog + POST | ✅ |
+| 排序拖拽调整 | HTML5 Drag & Drop | ✅ |
+| 使用 PageHeader + StatCard | PageHeader + 4 个 StatCard | ✅ |
+
+### 待验证
+
+- [ ] ESLint 检查
+- [ ] dev server + 浏览器验证
+- [ ] 拖拽排序功能
+- [ ] 复制模板功能
+- [ ] 新建/编辑/删除全流程
