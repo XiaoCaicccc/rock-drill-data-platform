@@ -308,8 +308,8 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 
 ### 待验证
 
+- [x] ESLint 检查 — ❌ 1 error：EquipmentView.tsx:407 中文引号导致 Parsing error
 - [ ] dev server 启动 + 浏览器验证
-- [ ] ESLint 检查通过
 - [ ] CRUD 全流程端到端测试
 - [ ] 机头编号唯一性校验（新建/编辑）
 - [ ] 有关联零件时删除拒绝
