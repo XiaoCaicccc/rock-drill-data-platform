@@ -162,9 +162,43 @@
 - **批量插入**：所有表使用 `createMany`，inspection_data_item 按记录分批（每批 240 条）
 - **API 路由**：通过相对路径 `../../../../scripts/seed` 导入共享的 `seedDatabase` 函数
 
+### 验证结果
+
+| 验收项 | 状态 | 备注 |
+|--------|------|------|
+| `npx tsx scripts/seed.ts` 成功执行 | ✅ | 全部 13 表插入成功 |
+| part_category | ✅ | 6 |
+| equipment | ✅ | 3 |
+| parameter_template | ✅ | 6 |
+| parameter_item | ✅ | 247（含文本参数的 options 自动创建额外条目） |
+| part | ✅ | 12 |
+| inspection_record | ✅ | 20 |
+| inspection_data_item | ✅ | 4940（≥4800 ✓） |
+| 其余 6 表 | ✅ | report 4, task 5, meeting 3, resolution 6, document 4, attendance 30 |
+
+---
+
+## Spec-003 - 公共组件库
+
+> 7 个通用业务组件，基于 shadcn/ui + lucide-react 封装。
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/components/common/StatCard.tsx` | 统计卡片：图标+标题+数值+趋势（绿/红/灰） |
+| `src/components/common/StatusBadge.tsx` | 状态标签：内置 20+ 状态→颜色映射，可扩展 |
+| `src/components/common/FilterBar.tsx` | 动态筛选栏：input/select/date + 查询/重置 |
+| `src/components/common/DataExportButton.tsx` | 导出按钮：loading 态 spinner |
+| `src/components/common/ConfirmDialog.tsx` | 确认弹窗：default/destructive 两种变体 |
+| `src/components/common/EmptyState.tsx` | 空状态占位：图标+标题+描述+可选操作 |
+| `src/components/common/PageHeader.tsx` | 页面头部：标题+描述+操作区+分隔线 |
+
+### 依赖的 shadcn/ui 组件
+
+Card, Badge, Input, Select, Button, AlertDialog, Label, Separator — **全部已安装，无需额外 add**。
+
 ### 待验证
 
-- [ ] 运行 `npx tsx scripts/seed.ts` 确认可正常插入数据
-- [ ] POST `/api/seed` 返回 `{ success: true, counts: { inspection_data_item: 4800, ... } }`
-- [ ] 查询数据库确认 13 张表数据完整
 - [ ] ESLint 检查通过
+- [ ] 后续功能模块引用这些组件时无编译错误
