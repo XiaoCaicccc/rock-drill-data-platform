@@ -192,7 +192,7 @@ model Task {
   assignee    String?                         // 负责人
   dueDate     DateTime?                       // 截止日期
   createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  updatedAt  DateTime  @updatedAt
 
   @@map("tasks")
 }

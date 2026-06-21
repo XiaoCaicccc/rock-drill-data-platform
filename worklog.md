@@ -56,3 +56,64 @@
 ### 后续任务
 
 下一个 Spec 是 Spec-002（数据库 Schema 初始化与种子数据），然后是 Spec-003（公共组件库）。
+
+---
+
+## Spec-002 - 数据库 Schema 初始化与种子数据
+
+### 完成内容
+
+**修改/创建的文件：**
+
+| 文件 | 说明 |
+|------|------|
+| `prisma/schema.prisma` | 层级化数据模型：13 张表（含 Equipment → Part → InspectionRecord → InspectionDataItem 四级层级） |
+| `src/app/api/seed/route.ts` | 种子 API（幂等：先清空再插入），6 类 × 40 参数模板 + 完整业务数据 |
+| `prisma/full-seed.ts` | 独立可执行种子脚本（`npx tsx prisma/full-seed.ts`），不依赖 Next.js 服务器 |
+| `prisma/seed-supplement.ts` | 补充种子脚本（仅 Meeting/Document/AttendanceRecord） |
+
+### 数据模型概览
+
+```
+Equipment (3) → Part (48) → InspectionDataItem (8320)
+                   ↑              ↑
+PartCategory (6)  →  ParameterTemplate (6) → ParameterItem (240)  ←┘
+                                                                  ←┘
+InspectionRecord (13) → InspectionDataItem (8320)
+AnalysisReport (4), Task (5), Meeting (4) → MeetingParticipant (19)
+Document (10), AttendanceRecord (220)
+```
+
+### 验收结果
+
+| 验收项 | 状态 | 验证值 |
+|--------|------|--------|
+| 零件类别 = 6 | ✅ | 钻头/活塞/气缸/阀组/轴承/密封件 |
+| 参数模板 = 6 | ✅ | 每类别一个模板 |
+| 参数项 = 240 | ✅ | 6 模板 × 40 项 |
+| 设备 = 3 | ✅ | YT28/HY200/DZ900 |
+| 零件 = 48 | ✅ | 12 核心件 + 36 补充件 |
+| 检测记录 = 13 | ✅ | 2 月 × 2 设备 × 3次/月 + 1 维修设备 |
+| 检测明细 ≥ 4800 | ✅ | **8320** 行 |
+| 分析报告 = 4 | ✅ | 月度×2 + 季度 + 专项 |
+| 任务 = 5 | ✅ | 含常规/领导交办 |
+| 会议 = 4，参会 = 19 | ✅ | 含已完成和待召开 |
+| 文档 = 10 | ✅ | 报告/纪要/标准/制度 |
+| 考勤 = 220 | ✅ | 5 人 × 44 工作日（4-5月） |
+| 种子幂等性 | ✅ | 先 deleteMany 再 create，可重复调用 |
+| ESLint | ✅ | 0 errors, 0 warnings |
+| 浏览器渲染 | ✅ | 9 个导航项正确显示，标题"数据总览"正常 |
+| 种子 API | ✅ | POST /api/seed 返回 200 + 完整 stats |
+
+### 技术细节
+
+- **Schema 恢复**：误执行 `prisma db pull` 覆写了 schema（丢失 @@map/cuid/注释），已手动恢复
+- **独立种子脚本**：由于 dev server 在容器环境中不稳定，创建了 `prisma/full-seed.ts` 作为备用，直接用 Prisma Client 运行
+- **种子 API 两种运行方式**：
+  1. `POST /api/seed` — 通过 Next.js API 路由
+  2. `npx tsx prisma/full-seed.ts` — 独立脚本（0.8s 完成）
+- **数据生成策略**：seededRandom 保证可复现，55% 最优区间 / 30% 标准区间 / 15% 超标
+
+### 后续任务
+
+下一个 Spec 是 Spec-003（公共组件库：StatCard、StatusBadge、FilterBar 等）。

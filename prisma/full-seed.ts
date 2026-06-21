@@ -1,5 +1,6 @@
-import { db } from '@/lib/db'
-import { NextResponse } from 'next/server'
+import { PrismaClient } from '@prisma/client'
+
+const db = new PrismaClient()
 
 // ============================================================
 //  参数定义：每类别 40 个参数项
@@ -363,14 +364,15 @@ function generateOptionValue(code: string, rng: () => number): string {
 }
 
 // ============================================================
-//  种子数据 API
+//  主函数：独立种子脚本
 // ============================================================
 
-export async function POST() {
+async function main() {
   const t0 = Date.now()
 
   try {
     // ── 1. 幂等清空（按外键依赖顺序） ──
+    console.log('🧹 清空所有表...')
     await db.inspectionDataItem.deleteMany()
     await db.inspectionRecord.deleteMany()
     await db.parameterItem.deleteMany()
@@ -384,10 +386,12 @@ export async function POST() {
     await db.analysisReport.deleteMany()
     await db.equipment.deleteMany()
     await db.partCategory.deleteMany()
+    console.log('✅ 所有表已清空')
 
     const rng = seededRandom(20250601)
 
     // ── 2. 零件类别 ──
+    console.log('📦 创建零件类别...')
     const categoryDefs = [
       { name: '钻头', code: 'ZT', description: '凿岩机钻头类零部件，包含十字钻头、球齿钻头等' },
       { name: '活塞', code: 'HS', description: '凿岩机活塞组件，包含冲击活塞、配气活塞等' },
@@ -404,14 +408,16 @@ export async function POST() {
         })
       )
     )
+    console.log(`   → 创建了 ${categories.length} 个零件类别`)
 
     // ── 3. 参数模板 + 参数项（每类别 40 项） ──
+    console.log('📐 创建参数模板与参数项...')
     const paramItemsByCategory: Record<string, string[]> = {} // categoryCode -> paramItemIds[]
 
     for (const cat of categories) {
       const params = CATEGORY_PARAMS[cat.code]
       if (!params || params.length !== 40) {
-        return NextResponse.json({ error: `类别 ${cat.code} 参数定义数量异常: ${params?.length}` }, { status: 500 })
+        throw new Error(`类别 ${cat.code} 参数定义数量异常: ${params?.length}`)
       }
 
       const template = await db.parameterTemplate.create({
@@ -440,8 +446,11 @@ export async function POST() {
 
       paramItemsByCategory[cat.code] = items.map((it) => it.id)
     }
+    const totalParamItems = Object.values(paramItemsByCategory).reduce((sum, ids) => sum + ids.length, 0)
+    console.log(`   → 创建了 ${categories.length} 个参数模板，${totalParamItems} 个参数项`)
 
     // ── 4. 设备档案 ──
+    console.log('🔧 创建设备档案...')
     const equipmentDefs = [
       { machineNo: 'YT28-2025-001', model: 'YT28', manufacturer: '天水凿岩机厂', productionDate: new Date('2024-06-15'), status: '在用', currentLocation: '贵州某隧道项目', totalWorkingHours: 2350 },
       { machineNo: 'HY200-2025-002', model: 'HY200', manufacturer: '阿特拉斯·科普柯', productionDate: new Date('2023-11-20'), status: '在用', currentLocation: '云南某矿山', totalWorkingHours: 4180 },
@@ -451,8 +460,10 @@ export async function POST() {
     const equipmentList = await Promise.all(
       equipmentDefs.map((e) => db.equipment.create({ data: { ...e } }))
     )
+    console.log(`   → 创建了 ${equipmentList.length} 台设备`)
 
     // ── 5. 零件档案 ──
+    console.log('⚙️ 创建零件档案...')
     // 核心零件（12 件，手动定义，展示用）
     const partDefs = [
       // 设备 1: YT28-2025-001
@@ -534,6 +545,7 @@ export async function POST() {
     const parts = await Promise.all(
       allParts.map((p) => db.part.create({ data: { ...p, installDate: new Date('2024-07-01') } }))
     )
+    console.log(`   → 创建了 ${parts.length} 个零件（核心 ${partDefs.length} + 补充 ${extraParts.length}）`)
 
     // 建立 part -> categoryId -> paramItems 的查找表
     const catCodeOfPart: Record<string, string> = {}
@@ -542,7 +554,8 @@ export async function POST() {
       catCodeOfPart[p.id] = cat?.code ?? ''
     }
 
-    // ── 6. 检测记录 + 检测数据明细（核心：4800+ 行） ──
+    // ── 6. 检测记录 + 检测数据明细（核心：8000+ 行） ──
+    console.log('📋 生成检测记录与检测数据明细...')
     const inspectors = ['张伟', '李明', '王芳', '刘强', '陈静']
 
     // 检测计划：2 台活跃设备 × 每月 3 次 × 2 个月 = 12 条记录
@@ -683,10 +696,16 @@ export async function POST() {
         data: { overallResult },
       })
 
+      if (recordIndex % 5 === 0 || recordIndex === inspectionPlan.length) {
+        console.log(`   → 检测记录 ${recordIndex}/${inspectionPlan.length}，累计明细 ${totalDataItems} 条`)
+      }
+
       recordIndex++
     }
+    console.log(`   → 创建了 ${recordIndex - 1} 条检测记录，${totalDataItems} 条检测数据明细`)
 
     // ── 7. 分析报告 ──
+    console.log('📊 创建分析报告...')
     await Promise.all([
       db.analysisReport.create({
         data: {
@@ -737,8 +756,10 @@ export async function POST() {
         },
       }),
     ])
+    console.log('   → 创建了 4 份分析报告')
 
     // ── 8. 部门任务 ──
+    console.log('📋 创建部门任务...')
     await Promise.all([
       db.task.create({
         data: {
@@ -796,8 +817,10 @@ export async function POST() {
         },
       }),
     ])
+    console.log('   → 创建了 5 个部门任务')
 
     // ── 9. 会议记录 ──
+    console.log('🤝 创建会议记录...')
     const meetingDefs = [
       {
         title: '4月份质量分析例会',
@@ -860,6 +883,7 @@ export async function POST() {
       },
     ]
 
+    let totalParticipants = 0
     for (const m of meetingDefs) {
       const meeting = await db.meeting.create({
         data: {
@@ -878,9 +902,12 @@ export async function POST() {
           attended: p.attended,
         })),
       })
+      totalParticipants += m.participants.length
     }
+    console.log(`   → 创建了 ${meetingDefs.length} 场会议，${totalParticipants} 位参会人员记录`)
 
     // ── 10. 文档归档 ──
+    console.log('📁 创建文档归档...')
     await Promise.all([
       db.document.create({
         data: { title: '2025年4月质量分析月报', category: '报告', relatedReportId: null, archived: true, remark: '正式发布版' },
@@ -913,8 +940,10 @@ export async function POST() {
         data: { title: '检测设备操作规程', category: '制度', filePath: '/docs/rules/equipment-sop.pdf', archived: true, remark: '通用操作规程' },
       }),
     ])
+    console.log('   → 创建了 10 份文档')
 
     // ── 11. 考勤记录（最近 2 个月，5 人 × ~44 个工作日） ──
+    console.log('📅 生成考勤记录...')
     const members = ['张伟', '李明', '王芳', '刘强', '陈静']
     const attendanceData: Array<{ date: string; memberName: string; status: string; remark: string | null }> = []
 
@@ -953,31 +982,36 @@ export async function POST() {
     for (let i = 0; i < attendanceData.length; i += 200) {
       await db.attendanceRecord.createMany({ data: attendanceData.slice(i, i + 200) })
     }
+    console.log(`   → 创建了 ${attendanceData.length} 条考勤记录`)
 
+    // ── 完成 ──
     const elapsed = Date.now() - t0
-
-    return NextResponse.json({
-      success: true,
-      message: '种子数据创建成功',
-      elapsed: `${(elapsed / 1000).toFixed(1)}s`,
-      stats: {
-        categories: categories.length,
-        parameterTemplates: categories.length,
-        parameterItems: Object.values(paramItemsByCategory).reduce((sum, ids) => sum + ids.length, 0),
-        equipment: equipmentList.length,
-        parts: parts.length,
-        inspectionRecords: recordIndex - 1,
-        inspectionDataItems: totalDataItems,
-        reports: 4,
-        tasks: 5,
-        meetings: meetingDefs.length,
-        documents: 10,
-        attendanceRecords: attendanceData.length,
-      },
-    })
+    console.log('\n' + '═'.repeat(50))
+    console.log('✅ 种子数据创建成功！')
+    console.log('═'.repeat(50))
+    console.log(`⏱️  耗时: ${(elapsed / 1000).toFixed(1)}s`)
+    console.log(`📦 零件类别:              ${categories.length}`)
+    console.log(`📐 参数模板:              ${categories.length}`)
+    console.log(`📐 参数项:                ${totalParamItems}`)
+    console.log(`🔧 设备:                  ${equipmentList.length}`)
+    console.log(`⚙️  零件:                  ${parts.length}`)
+    console.log(`📋 检测记录:              ${recordIndex - 1}`)
+    console.log(`📊 检测数据明细:          ${totalDataItems}`)
+    console.log(`📈 分析报告:              4`)
+    console.log(`📌 部门任务:              5`)
+    console.log(`🤝 会议记录:              ${meetingDefs.length}`)
+    console.log(`👥 参会人员记录:          ${totalParticipants}`)
+    console.log(`📁 文档:                  10`)
+    console.log(`📅 考勤记录:              ${attendanceData.length}`)
+    console.log('═'.repeat(50))
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '未知错误'
     console.error('[SEED ERROR]', message, error)
-    return NextResponse.json({ success: false, message }, { status: 500 })
+    process.exit(1)
+  } finally {
+    await db.$disconnect()
+    console.log('🔌 数据库连接已关闭')
   }
 }
+
+main()
