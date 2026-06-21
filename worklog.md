@@ -440,3 +440,84 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 - [ ] 拖拽排序功能
 - [ ] 复制模板功能
 - [ ] 新建/编辑/删除全流程
+---
+
+## Spec-008 - 检测数据矩阵式录入
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/app/api/inspections/batch/route.ts` | POST 批量创建检测记录：校验 record + items → 生成 record_no(JC-YYYYMMDD-NNN) → 计算 is_qualified/is_optimal → createMany |
+| `src/components/inspections/MatrixTable.tsx` | 核心矩阵表格：@tanstack/react-table + column pinning + defaultValue onBlur + 范围校验红框 + Tab 导航 |
+| `src/components/inspections/InspectionEntryView.tsx` | 录入主视图：设备选择 → 检测信息表单 → 实时统计 → 矩阵表格 → 一键提交 |
+
+### 功能实现
+
+1. **录入流程** — 选择设备(Select) → 自动并行加载零件列表 + 参数模板 → 按类别匹配构建矩阵
+2. **矩阵表格（MatrixTable）**：
+   - 行 = 零件（编号 + 名称），列 = 参数项（名称 + 单位 + 类别编码标注）
+   - 列冻结：前 2 列（编号、名称）通过 tanstack/react-table columnPinning + CSS sticky 固定
+   - 横向滚动：容器 overflow-x-auto，表格 minWidth = getTotalSize()
+   - 单元格可编辑：defaultValue + onBlur 受控提交（避免重渲染失焦）
+   - Tab 导航：原生 input Tab 顺序，N/A 单元格无 focusable 元素自动跳过
+   - 范围校验：数值型单元格超出标准区间时显示红框（border-red-400 + ring + bg-red-50）
+   - N/A 单元格：该零件类别不适用该参数时显示灰色破折号
+3. **批量保存 API**：
+   - 请求体：{ record: {...}, items: [{part_id, param_item_id, value_number, value_text}] }
+   - 自动生成 record_no（JC-YYYYMMDD-NNN 递增序号）
+   - 批量计算每条数据的 is_qualified / is_optimal（基于参数模板标准/最优区间）
+   - 整体判定 overall_result：全部合格=合格，否则=不合格
+   - 使用 Prisma createMany 批量插入 inspection_data_item
+4. **实时统计** — 4 个 StatCard：零件数、参数列数、已填参数数/总数、预估合格率（带趋势箭头）
+5. **模板覆盖率** — 选中设备后显示零件类别数与已配置模板数，无模板类别显示红色警告 Badge
+6. **检测信息表单** — 检测人员(必填)、批次号(选填)、检测日期(必填)、备注(选填)
+7. **提交/清空** — 提交按钮(含 loading 状态) + 清空按钮重置所有状态
+8. **性能优化** — MatrixTable 内部用 useRef 存储频繁变化的 props（cellValues/onCellChange/disabled），避免 columns useMemo 频繁重建
+
+### API 设计
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/inspections/batch` | 批量创建检测记录 + 明细，自动计算合格/最优判定 |
+
+### 数据流
+
+| 步骤 | API | 说明 |
+|------|-----|------|
+| 1 | `GET /api/equipment?status=在用` | 获取设备列表供选择 |
+| 2 | `GET /api/equipment/[id]/parts` | 获取设备下零件列表 |
+| 3 | `GET /api/parameter-templates` | 获取全部模板，按 category_code 匹配零件类别 |
+| 4 | `POST /api/inspections/batch` | 提交整机检测数据 |
+
+### 技术要点
+
+- 矩阵表格：@tanstack/react-table v8 + column pinning + border-collapse separate
+- 单元格编辑：defaultValue（非受控）+ onBlur 回调（避免 React 重渲染导致失焦）
+- 列冻结 CSS：sticky positioning + z-index 分层（header=30, pinned body=20, regular=10）
+- 单元格 key 格式：`partId::paramItemId`（CUID 不含 ::，解析安全）
+- 类别匹配：通过 category_code（零件 API / 模板 API 均返回此字段）关联
+
+### 验收标准对照
+
+| 验收项 | 实现方式 | 状态 |
+|--------|---------|------|
+| 选择设备 → 加载零件 + 参数模板 → 矩阵表格 | useEffect + Promise.all + MatrixTable | ✅ |
+| 行 = 零件（编号+名称） | PartRow + 前两列 pinned | ✅ |
+| 列 = 参数（名称+单位） | ParamColumn header 三行布局 | ✅ |
+| Tab 键单元格间导航 | 原生 input Tab + N/A 无 focusable | ✅ |
+| 数值超出标准区间红框 | checkOutOfRange + ring-1 ring-red-400 | ✅ |
+| 固定前 2 列 + 横向滚动 | columnPinning left=[code,name] + sticky | ✅ |
+| 一键提交全部数据 | POST /api/inspections/batch | ✅ |
+| 提交后计算合格/最优判定 | API 端逐条计算 is_qualified/is_optimal | ✅ |
+| 顶部实时统计 | 4 个 StatCard（useMemo 计算） | ✅ |
+| 使用 PageHeader | ✅ | ✅ |
+
+### 待验证
+
+- [ ] ESLint 检查
+- [ ] dev server + 浏览器验证
+- [ ] 矩阵表格横向滚动 + 列冻结效果
+- [ ] Tab 键在可编辑单元格间导航
+- [ ] 范围校验红框显示
+- [ ] 提交全流程（含 record_no 生成和合格判定）
