@@ -55,65 +55,61 @@
 
 ### 后续任务
 
-下一个 Spec 是 Spec-002（数据库 Schema 初始化与种子数据），然后是 Spec-003（公共组件库）。
+下一个 Spec 是 Spec-002a（数据库 Schema 重写：snake_case 字段名 + 新表结构）。
 
 ---
 
-## Spec-002 - 数据库 Schema 初始化与种子数据
+## Spec-002a - Prisma Schema 重写（snake_case 版）
+
+> 上一轮 Spec-002 的 camelCase schema 被用户否决，回退后按新规约重写。
+> 已删除旧 Spec-002 产物（种子脚本、旧数据库、旧 API 路由）。
 
 ### 完成内容
 
-**修改/创建的文件：**
+| 文件 | 说明 |
+|------|------|
+| `prisma/schema.prisma` | 13 张表，snake_case 字段名，`datasource url = "file:./dev.db"` |
+| `.env` | 更新为 `DATABASE_URL=file:./prisma/dev.db` |
+
+### 已删除的文件
 
 | 文件 | 说明 |
 |------|------|
-| `prisma/schema.prisma` | 层级化数据模型：13 张表（含 Equipment → Part → InspectionRecord → InspectionDataItem 四级层级） |
-| `src/app/api/seed/route.ts` | 种子 API（幂等：先清空再插入），6 类 × 40 参数模板 + 完整业务数据 |
-| `prisma/full-seed.ts` | 独立可执行种子脚本（`npx tsx prisma/full-seed.ts`），不依赖 Next.js 服务器 |
-| `prisma/seed-supplement.ts` | 补充种子脚本（仅 Meeting/Document/AttendanceRecord） |
+| `src/app/api/seed/route.ts` | 旧种子 API |
+| `prisma/full-seed.ts` | 旧独立种子脚本 |
+| `prisma/seed-supplement.ts` | 旧补充种子脚本 |
+| `db/custom.db` | 旧数据库（camelCase 表结构） |
+| `src/app/api/{reports,export,parts,inspections,categories,tasks,dashboard,route}.ts` | 更早的废弃 API 路由 |
 
-### 数据模型概览
+### Schema 变更要点（vs 旧 camelCase 版）
 
-```
-Equipment (3) → Part (48) → InspectionDataItem (8320)
-                   ↑              ↑
-PartCategory (6)  →  ParameterTemplate (6) → ParameterItem (240)  ←┘
-                                                                  ←┘
-InspectionRecord (13) → InspectionDataItem (8320)
-AnalysisReport (4), Task (5), Meeting (4) → MeetingParticipant (19)
-Document (10), AttendanceRecord (220)
-```
+| 变更项 | 旧 | 新 |
+|--------|------|------|
+| 字段命名 | camelCase（`machineNo`） | snake_case（`machine_no`） |
+| 数据源 | `env("DATABASE_URL")` → `db/custom.db` | `"file:./dev.db"` |
+| 会议参会人 | 独立表 `meeting_participants` | `meeting.participants` 字符串字段（逗号分隔） |
+| 会议决议 | 无 | 新增 `meeting_resolution` 表 |
+| 考勤日期 | `String`（YYYY-MM-DD） | `DateTime` |
+| 文档表 | 有 `updated_at` | 移除 `updated_at` |
 
-### 验收结果
+### 验证结果
 
-| 验收项 | 状态 | 验证值 |
-|--------|------|--------|
-| 零件类别 = 6 | ✅ | 钻头/活塞/气缸/阀组/轴承/密封件 |
-| 参数模板 = 6 | ✅ | 每类别一个模板 |
-| 参数项 = 240 | ✅ | 6 模板 × 40 项 |
-| 设备 = 3 | ✅ | YT28/HY200/DZ900 |
-| 零件 = 48 | ✅ | 12 核心件 + 36 补充件 |
-| 检测记录 = 13 | ✅ | 2 月 × 2 设备 × 3次/月 + 1 维修设备 |
-| 检测明细 ≥ 4800 | ✅ | **8320** 行 |
-| 分析报告 = 4 | ✅ | 月度×2 + 季度 + 专项 |
-| 任务 = 5 | ✅ | 含常规/领导交办 |
-| 会议 = 4，参会 = 19 | ✅ | 含已完成和待召开 |
-| 文档 = 10 | ✅ | 报告/纪要/标准/制度 |
-| 考勤 = 220 | ✅ | 5 人 × 44 工作日（4-5月） |
-| 种子幂等性 | ✅ | 先 deleteMany 再 create，可重复调用 |
-| ESLint | ✅ | 0 errors, 0 warnings |
-| 浏览器渲染 | ✅ | 9 个导航项正确显示，标题"数据总览"正常 |
-| 种子 API | ✅ | POST /api/seed 返回 200 + 完整 stats |
+| 验收项 | 状态 |
+|--------|------|
+| 13 个 model 全部可访问 | ✅ |
+| `prisma generate` 成功 | ✅ |
+| `prisma db push` 成功创建 `dev.db` | ✅ |
+| ESLint 0 errors | ✅ |
+| `GET /` HTTP 200 | ✅ |
+| dev server 无报错 | ✅ |
 
-### 技术细节
+### 项目当前状态描述/判断
 
-- **Schema 恢复**：误执行 `prisma db pull` 覆写了 schema（丢失 @@map/cuid/注释），已手动恢复
-- **独立种子脚本**：由于 dev server 在容器环境中不稳定，创建了 `prisma/full-seed.ts` 作为备用，直接用 Prisma Client 运行
-- **种子 API 两种运行方式**：
-  1. `POST /api/seed` — 通过 Next.js API 路由
-  2. `npx tsx prisma/full-seed.ts` — 独立脚本（0.8s 完成）
-- **数据生成策略**：seededRandom 保证可复现，55% 最优区间 / 30% 标准区间 / 15% 超标
+- Spec-001（布局导航）✅ 已交付
+- Spec-002a（Schema）✅ 已交付，数据库为空，等待后续种子数据 Spec
+- 所有视图仍为 PlaceholderView 占位
+- 下一步：种子数据 → 公共组件库 → 各功能模块
 
 ### 后续任务
 
-下一个 Spec 是 Spec-003（公共组件库：StatCard、StatusBadge、FilterBar 等）。
+下一个任务是种子数据（Spec-002b），然后是 Spec-003（公共组件库）。

@@ -4,251 +4,263 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = "file:./dev.db"
 }
 
 // ============================================================
-//  设备与零件档案（一机一档 → 一件一档）
+//  ① equipment — 设备/机头档案
 // ============================================================
 
-/// 设备/机头档案
-model Equipment {
-  id                String   @id @default(cuid())
-  machineNo         String   @unique              // 机头编号 YT28-2025-001
-  model             String                         // 型号 YT28 / HY200 / DZ900
-  manufacturer      String?                        // 制造商
-  productionDate    DateTime?                      // 出厂日期
-  status            String   @default("在用")      // 在用/维修中/退役/库存
-  currentLocation   String?                        // 当前位置/工地
-  totalWorkingHours Float    @default(0)           // 累计工作时长(h)
-  remark            String?                        // 备注
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model equipment {
+  id                  String    @id @default(cuid())
+  machine_no          String    @unique
+  model               String
+  manufacturer        String?
+  production_date     DateTime?
+  status              String    @default("在用")
+  current_location    String?
+  total_working_hours Float     @default(0)
+  remark              String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
-  parts             Part[]
-  inspectionRecords  InspectionRecord[]
+  parts               part[]
+  inspection_records  inspection_record[]
 
   @@map("equipment")
 }
 
-/// 零件类别
-model PartCategory {
-  id                 String   @id @default(cuid())
-  name               String   @unique             // 钻头 / 活塞 / 气缸 …
-  code               String   @unique             // ZT / HS / QG …
-  description        String?                        // 类别说明
-  standardParamCount Int      @default(40)          // 该类别标准检测参数数量
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+// ============================================================
+//  ② part_category — 零件类别
+// ============================================================
 
-  parts              Part[]
-  parameterTemplate  ParameterTemplate?
+model part_category {
+  id                   String  @id @default(cuid())
+  name                 String  @unique
+  code                 String  @unique
+  description          String?
+  standard_param_count Int     @default(40)
 
-  @@map("part_categories")
-}
+  parts                part[]
+  parameter_template   parameter_template?
 
-/// 零件档案（一件一档）
-model Part {
-  id             String   @id @default(cuid())
-  code           String                         // 零件编号 ZT-001
-  name           String                         // 零件名称
-  categoryId     String
-  category       PartCategory @relation(fields: [categoryId], references: [id])
-  specification  String?                        // 规格型号 φ48mm
-  material       String?                        // 材质 42CrMo
-  supplier       String?                        // 供应商
-  equipmentId    String?                        // 所属设备（可空=库存件）
-  equipment      Equipment?  @relation(fields: [equipmentId], references: [id])
-  installDate    DateTime?                      // 装机日期
-  workingHours   Float    @default(0)           // 已工作时长(h)
-  status         String   @default("在用")      // 在用/已更换/待检/报废
-  remark         String?                        // 备注
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  inspectionDataItems InspectionDataItem[]
-
-  @@unique([code])
-  @@map("parts")
+  @@map("part_category")
 }
 
 // ============================================================
-//  检测参数模板
+//  ③ part — 零件档案
 // ============================================================
 
-/// 参数模板（每类别一个）
-model ParameterTemplate {
-  id        String  @id @default(cuid())
-  name      String                           // 钻头检测模板
-  version   Int     @default(1)               // 模板版本号
-  categoryId String  @unique
-  category  PartCategory @relation(fields: [categoryId], references: [id])
+model part {
+  id            String  @id @default(cuid())
+  code          String  @unique
+  name          String
+  category_id   String
+  specification String?
+  material      String?
+  supplier      String?
+  equipment_id  String?
+  install_date  DateTime?
+  working_hours Float   @default(0)
+  status        String  @default("在用")
+  remark        String?
 
-  items     ParameterItem[]
+  category      part_category @relation(fields: [category_id], references: [id])
+  equipment     equipment?    @relation(fields: [equipment_id], references: [id])
+  data_items    inspection_data_item[]
 
-  @@map("parameter_templates")
-}
-
-/// 参数项定义（模板内的具体参数）
-model ParameterItem {
-  id          String   @id @default(cuid())
-  templateId  String
-  template    ParameterTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  paramName   String                          // 硬度HRC
-  paramCode   String                          // HARDNESS
-  unit        String?                         // HRC / mm / g
-  dataType    String   @default("number")     // number / text / boolean / option
-  standardMin Float?                          // 标准值下限
-  standardMax Float?                          // 标准值上限
-  optimalMin  Float?                          // 最优区间下限
-  optimalMax  Float?                          // 最优区间上限
-  sortOrder   Int      @default(0)            // 排序号
-  options     String?                         // 选项值（JSON数组，text/option用）
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  inspectionDataItems InspectionDataItem[]
-
-  @@map("parameter_items")
+  @@map("part")
 }
 
 // ============================================================
-//  检测数据（核心业务）
+//  ④ parameter_template — 检测参数模板
 // ============================================================
 
-/// 检测记录头（一次检测事件 = 一台设备的一次检测）
-model InspectionRecord {
-  id              String   @id @default(cuid())
-  recordNo        String   @unique            // JY-2025-0001
-  equipmentId     String?                      // 检测的设备
-  equipment       Equipment? @relation(fields: [equipmentId], references: [id])
-  inspector       String                       // 检测员
-  batchNo         String?                      // 批次号
-  inspectionDate  DateTime                     // 检测日期
-  overallResult   String   @default("待检")   // 待检/合格/不合格/待复检
-  remark          String?                      // 备注
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  dataItems       InspectionDataItem[]
-
-  @@map("inspection_records")
-}
-
-/// 检测数据明细（矩阵式：每个参数值一行）
-model InspectionDataItem {
-  id            String   @id @default(cuid())
-  recordId      String
-  record        InspectionRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
-  partId        String
-  part          Part             @relation(fields: [partId], references: [id])
-  paramItemId   String
-  paramItem     ParameterItem    @relation(fields: [paramItemId], references: [id])
-  valueNumber   Float?                       // 数值型结果
-  valueText     String?                      // 文本型结果
-  isQualified   Boolean?                      // 是否合格（标准区间判定）
-  isOptimal     Boolean?                      // 是否在最优区间内
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([recordId])
-  @@index([partId])
-  @@index([paramItemId])
-  @@map("inspection_data_items")
-}
-
-// ============================================================
-//  分析报告
-// ============================================================
-
-model AnalysisReport {
-  id         String   @id @default(cuid())
-  title      String                          // 报告标题
-  reportNo   String   @unique               // BG-2025-04-YD001
-  type       String                          // 月度分析/季度分析/专项分析/全生命周期
-  period     String?                         // 2025年4月
-  status     String   @default("草稿")       // 草稿/已发布/已归档
-  summary    String?                         // 报告摘要
-  conclusion String?                         // 结论建议
-  author     String                          // 编制人
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@map("analysis_reports")
-}
-
-// ============================================================
-//  部门工作台
-// ============================================================
-
-/// 任务
-model Task {
-  id          String    @id @default(cuid())
-  title       String                          // 任务标题
-  description String?                         // 任务描述
-  priority    String    @default("中")        // 高/中/低
-  status      String    @default("待办")      // 待办/进行中/已完成/已关闭
-  taskType    String    @default("常规")      // 常规/会议决议/领导交办
-  assignee    String?                         // 负责人
-  dueDate     DateTime?                       // 截止日期
-  createdAt   DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  @@map("tasks")
-}
-
-/// 会议
-model Meeting {
-  id            String   @id @default(cuid())
-  title         String                          // 会议标题
-  meetingDate   DateTime                        // 会议日期时间
-  location      String?                         // 地点
-  organizer     String                          // 组织人
-  status        String   @default("待召开")    // 待召开/进行中/已完成
-  minutesContent String?              // 纪要内容
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  participants  MeetingParticipant[]
-
-  @@map("meetings")
-}
-
-/// 会议参会人员
-model MeetingParticipant {
+model parameter_template {
   id          String  @id @default(cuid())
-  meetingId   String
-  meeting     Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  name        String                           // 参会人姓名
-  attended    Boolean @default(false)          // 是否出勤
+  category_id String  @unique
+  name        String
+  version     Int     @default(1)
 
-  @@map("meeting_participants")
+  category    part_category   @relation(fields: [category_id], references: [id])
+  items       parameter_item[]
+
+  @@map("parameter_template")
 }
 
-/// 文档归档
-model Document {
-  id               String   @id @default(cuid())
-  title            String                          // 文档标题
-  category         String                          // 报告/纪要/标准/制度/其他
-  filePath         String?                         // 文件路径
-  relatedReportId  String?                         // 关联报告
-  archived         Boolean  @default(false)        // 是否已归档
-  remark           String?                         // 备注
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+// ============================================================
+//  ⑤ parameter_item — 参数项定义
+// ============================================================
 
-  @@map("documents")
+model parameter_item {
+  id           String  @id @default(cuid())
+  template_id  String
+  param_name   String
+  param_code   String
+  unit         String?
+  data_type    String  @default("number")
+  standard_min Float?
+  standard_max Float?
+  optimal_min  Float?
+  optimal_max  Float?
+  sort_order   Int     @default(0)
+  options      String?
+
+  template     parameter_template    @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  data_items   inspection_data_item[]
+
+  @@map("parameter_item")
 }
 
-/// 考勤记录
-model AttendanceRecord {
-  id        String   @id @default(cuid())
-  date      String                           // 日期 YYYY-MM-DD
-  memberName String                          // 成员姓名
-  status    String                           // 出勤/请假/迟到/出差
-  remark    String?                          // 备注
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ============================================================
+//  ⑥ inspection_record — 检测记录头
+// ============================================================
 
-  @@map("attendance_records")
+model inspection_record {
+  id              String    @id @default(cuid())
+  record_no       String    @unique
+  equipment_id    String?
+  inspector       String
+  batch_no        String?
+  inspection_date DateTime
+  overall_result  String    @default("待检")
+  remark          String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  equipment  equipment?             @relation(fields: [equipment_id], references: [id])
+  data_items inspection_data_item[]
+
+  @@map("inspection_record")
+}
+
+// ============================================================
+//  ⑦ inspection_data_item — 检测数据明细
+// ============================================================
+
+model inspection_data_item {
+  id             String  @id @default(cuid())
+  record_id      String
+  part_id        String
+  param_item_id  String
+  value_number   Float?
+  value_text     String?
+  is_qualified   Boolean?
+  is_optimal     Boolean?
+
+  record     inspection_record @relation(fields: [record_id], references: [id], onDelete: Cascade)
+  part       part              @relation(fields: [part_id], references: [id])
+  param_item  parameter_item    @relation(fields: [param_item_id], references: [id])
+
+  @@index([record_id])
+  @@index([part_id])
+  @@index([param_item_id])
+  @@map("inspection_data_item")
+}
+
+// ============================================================
+//  ⑧ analysis_report — 分析报告
+// ============================================================
+
+model analysis_report {
+  id          String   @id @default(cuid())
+  report_no   String   @unique
+  title       String
+  type        String
+  period      String?
+  summary     String?
+  conclusion  String?
+  author      String
+  status      String   @default("草稿")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("analysis_report")
+}
+
+// ============================================================
+//  ⑨ task — 任务
+// ============================================================
+
+model task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  priority    String    @default("中")
+  status      String    @default("待办")
+  assignee    String?
+  due_date    DateTime?
+  task_type   String    @default("常规")
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  @@map("task")
+}
+
+// ============================================================
+//  ⑩ meeting — 会议
+// ============================================================
+
+model meeting {
+  id              String   @id @default(cuid())
+  title           String
+  meeting_date    DateTime
+  location        String?
+  organizer       String
+  participants    String?
+  minutes_content String?
+  status          String   @default("待召开")
+  created_at      DateTime @default(now())
+  updated_at      DateTime  @updatedAt
+
+  resolutions meeting_resolution[]
+
+  @@map("meeting")
+}
+
+// ============================================================
+//  ⑪ meeting_resolution — 会议决议
+// ============================================================
+
+model meeting_resolution {
+  id                 String   @id @default(cuid())
+  meeting_id         String
+  content            String
+  responsible_person String?
+  due_date           DateTime?
+  status             String   @default("待执行")
+
+  meeting meeting @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+
+  @@map("meeting_resolution")
+}
+
+// ============================================================
+//  ⑫ document — 文件归档
+// ============================================================
+
+model document {
+  id                String   @id @default(cuid())
+  title             String
+  category          String
+  file_path         String?
+  related_report_id String?
+  archived          Boolean  @default(false)
+  created_at        DateTime @default(now())
+
+  @@map("document")
+}
+
+// ============================================================
+//  ⑬ attendance_record — 考勤记录
+// ============================================================
+
+model attendance_record {
+  id          String   @id @default(cuid())
+  date        DateTime
+  member_name String
+  status      String
+  remark      String?
+
+  @@map("attendance_record")
 }
