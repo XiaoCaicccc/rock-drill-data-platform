@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 零部件类别
+model PartCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique // 类别名称，如"钻头"、"活塞"、"缸体"等
+  code      String   @unique // 类别编码
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parts Part[]
+
+  @@map("part_categories")
+}
+
+// 零部件台账
+model Part {
+  id          String   @id @default(cuid())
+  code        String   // 零部件编号
+  name        String   // 零部件名称
+  categoryId  String
+  category    PartCategory @relation(fields: [categoryId], references: [id])
+  specification String?  // 规格型号
+  material    String?  // 材质
+  supplier    String?  // 供应商
+  unit        String   @default("件") // 计量单位
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inspections InspectionRecord[]
+
+  @@unique([code])
+  @@map("parts")
+}
+
+// 检测记录
+model InspectionRecord {
+  id            String   @id @default(cuid())
+  recordNo      String   @unique // 检测编号，如 JY-2025-0001
+  partId        String
+  part          Part     @relation(fields: [partId], references: [id])
+  batchNo       String?  // 批次号
+  inspector     String   // 检测员
+  inspectionDate DateTime // 检测日期
+  hardness      Float?   // 硬度值 HRC
+  dimensionA    Float?   // 尺寸A mm
+  dimensionB    Float?   // 尺寸B mm
+  weight        Float?   // 重量 g
+  surfaceQuality String? // 表面质量：合格/不合格
+  innerDefect   String?  // 内部缺陷：无/轻微/严重
+  result        String   @default("待检") // 检测结果：待检/合格/不合格/待复检
+  remark        String?  // 备注
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("inspection_records")
+}
+
+// 分析报告
+model AnalysisReport {
+  id          String   @id @default(cuid())
+  title       String   // 报告标题
+  reportNo    String   @unique // 报告编号
+  type        String   // 报告类型：月度分析/季度分析/专项分析/全生命周期
+  period      String?  // 分析周期，如 "2025年6月"
+  status      String   @default("草稿") // 草稿/已发布/已归档
+  summary     String?  // 报告摘要
+  conclusion  String?  // 结论建议
+  author      String   // 编制人
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("analysis_reports")
+}
+
+// 部门任务/助理工作项
+model Task {
+  id          String   @id @default(cuid())
+  title       String   // 任务标题
+  description String?  // 任务描述
+  priority    String   @default("中") // 高/中/低
+  status      String   @default("待办") // 待办/进行中/已完成/已关闭
+  assignee    String?  // 负责人
+  dueDate     DateTime? // 截止日期
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("tasks")
+}
