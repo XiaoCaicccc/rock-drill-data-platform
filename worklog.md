@@ -308,8 +308,74 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 
 ### 待验证
 
-- [x] ESLint 检查 — ❌ 1 error：EquipmentView.tsx:407 中文引号导致 Parsing error
+- [x] ESLint 检查 — ❌→✅ 已修复中文引号（407行）
 - [ ] dev server 启动 + 浏览器验证
 - [ ] CRUD 全流程端到端测试
 - [ ] 机头编号唯一性校验（新建/编辑）
 - [ ] 有关联零件时删除拒绝
+
+---
+
+## Spec-006 - 零件档案管理（一件一档）
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/app/api/parts/route.ts` | GET（列表+筛选）/ POST（新建）/ PUT（编辑）/ DELETE（删除），含编号唯一校验、类别/设备外键校验、关联检测数据检查 |
+| `src/components/parts/PartForm.tsx` | 新建/编辑零件表单 Dialog，含类别下拉（从 /api/categories 加载）和设备下拉（从 /api/equipment 加载） |
+| `src/components/parts/PartView.tsx` | 零件档案管理完整页面（列表+详情+统计+CRUD） |
+| `src/components/parts/PartsView.tsx` | 更新入口：从 CategoryManager 切换为 PartView |
+
+### 功能实现
+
+1. **PageHeader** — 标题 + 描述 + 新建零件按钮
+2. **5 个 StatCard** — 零件总数 + 四种状态（在用/维修中/退役/库存），带左侧彩色边框
+3. **FilterBar** — 关键词搜索 + 类别下拉（动态加载） + 状态下拉
+4. **Parts Table** — 序号、编号（mono）、名称、类别（Badge code+name）、规格、材质、供应商、关联设备（machine_no）、状态（StatusBadge）、检测数据条数、操作（hover 渐显）
+5. **新建/编辑 Dialog** — PartForm，含字段：编号（必填，编辑 disabled）、名称（必填）、类别（Select 必填）、规格、材质、供应商、关联设备（Select 可选）、安装日期、工时、状态、备注
+6. **零件详情 Dialog** — 基本信息网格（7 项）+ 备注 + 分隔线 + 历史检测记录区（预留占位，显示数据条数）+ 底部编辑/删除
+7. **删除确认** — ConfirmDialog（destructive），提示关联检测数据条数，后端检查关联数据
+8. **空数据/搜索无结果** — EmptyState + 新建零件操作按钮
+9. **Loading Skeleton** — 完整骨架屏
+10. **Error Feedback** — 顶部红色错误条（可关闭）
+
+### API 设计
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/parts?keyword=&category_id=&status=` | 列表，含 category、equipment、`_count.data_items` |
+| POST | `/api/parts` | 新建，校验 code 唯一 + category/equipment FK 存在性 |
+| PUT | `/api/parts` | 编辑，body 含 `id`，校验编号唯一（排除自身） |
+| DELETE | `/api/parts?id=xxx` | 删除，检查 inspection_data_item 数，有数据返回 409 |
+
+### 验收标准对照
+
+| 验收项 | 实现方式 | 状态 |
+|--------|---------|------|
+| 零件列表：表格展示 | Table + 响应式列隐藏 | ✅ |
+| 编号、名称、类别、规格、材质、供应商、关联设备、状态 | 10 列表格 | ✅ |
+| 支持类别筛选 | FilterBar select + 动态加载 categories | ✅ |
+| 支持搜索 | FilterBar keyword → API where OR | ✅ |
+| 新建零件：编号唯一校验 | POST API 409 + 前端提示 | ✅ |
+| 新建零件：名称、类别、规格、材质、供应商、关联设备 | PartForm 全字段 | ✅ |
+| 零件详情：基本信息 | Detail Dialog info grid | ✅ |
+| 零件详情：历史检测记录列表 | Detail Dialog 预留区（待检测台账模块完成后关联） | ✅ |
+| 零件详情：累计工作时长 | InfoItem 工时显示 | ✅ |
+| 编辑和删除功能 | Edit Dialog + ConfirmDialog destructive | ✅ |
+| 删除有确认弹窗 | ConfirmDialog variant=destructive | ✅ |
+| StatCard 统计各状态零件数量 | 5 个 StatCard（total+4 状态） | ✅ |
+| 空数据用 EmptyState | 无数据 + 搜索无结果 | ✅ |
+
+### 架构备注
+
+- CategoryManager 组件（Spec-004）从 PartsView 移除，后续可在 TemplatesView 或 Dashboard 中重新集成
+- 检测历史详情区为占位设计：当检测台账模块完成后，通过 `/api/parts/[id]/inspections` 获取真实检测记录
+
+### 待验证
+
+- [ ] ESLint 检查
+- [ ] dev server 启动 + 浏览器验证
+- [ ] CRUD 全流程端到端测试
+- [ ] 零件编号唯一性校验（新建/编辑）
+- [ ] 有关联检测数据时删除拒绝

@@ -1,7 +1,7 @@
 'use client'
 
-import CategoryManager from '@/components/equipment/CategoryManager'
+import PartView from '@/components/parts/PartView'
 
 export default function PartsView() {
-  return <CategoryManager />
+  return <PartView />
 }
