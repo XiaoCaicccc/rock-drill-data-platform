@@ -380,7 +380,7 @@ export default function TemplateView() {
         <EmptyState
           icon={SlidersHorizontal}
           title="暂无参数模板"
-          description="请点击"新建模板"按钮为零件类别创建检测参数配置。"
+          description={'请点击"新建模板"按钮为零件类别创建检测参数配置。'}
           action={
             categoryOptions.length > 0
               ? { label: '新建模板', onClick: handleCreate }
