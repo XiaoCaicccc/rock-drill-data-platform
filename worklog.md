@@ -113,3 +113,58 @@
 ### 后续任务
 
 下一个任务是种子数据（Spec-002b），然后是 Spec-003（公共组件库）。
+
+---
+
+## Spec-002b - 种子数据脚本
+
+> 纯代码生成，未执行验证（dev server 不稳定）。
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `scripts/seed.ts` | 独立种子脚本，导出 `seedDatabase(prisma)` 函数 + `main()` 独立执行入口 |
+| `src/app/api/seed/route.ts` | POST API 路由，调用 `seedDatabase(db)` 并返回 JSON |
+
+### 已清理的残留文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/app/api/seed/route.ts` (旧 772 行版本) | 上一轮中断时残留 |
+| `prisma/seed-run.ts` | 更早的废弃脚本 |
+| `prisma/seed-standalone.ts` | 更早的废弃脚本 |
+
+### 数据规模
+
+| 表 | 数量 | 说明 |
+|----|------|------|
+| part_category | 6 | 钻头/活塞/气缸/阀组/轴承/密封件 |
+| equipment | 3 | COP1838ME(在用)/DD422i(维修中)/Boomer S2(库存) |
+| parameter_template | 6 | 每类别1个模板 |
+| parameter_item | 240 | 每模板40项（38数值+2文本），含标准/最优区间 |
+| part | 12 | 每类别2个，分属设备1和设备2 |
+| inspection_record | 20 | 2设备 × 2月 × 5次/月 |
+| inspection_data_item | 4800 | 20记录 × 6零件 × 40参数 = 4800（正态分布生成） |
+| analysis_report | 4 | 月度×2 + 季度×1 + 全生命周期×1 |
+| task | 5 | 不同优先级/状态/类型 |
+| meeting | 3 | 含会议纪要 |
+| meeting_resolution | 6 | 每会议2条决议 |
+| document | 4 | 月报×2 + 技术文档 + 操作规程 |
+| attendance_record | 30 | 5人 × 6个工作日 |
+
+### 关键设计
+
+- **幂等**：先 `deleteMany` 所有13张表（FK安全顺序），再批量插入
+- **值生成**：Box-Muller 正态分布，stdDev = 标准区间宽度的 1/4，约 95% 合格
+- **自动判定**：`is_qualified` / `is_optimal` 根据标准/最优区间自动计算
+- **overall_result**：根据每条记录的合格率自动判定（≥95% 优秀 / ≥80% 合格 / ≥60% 待修 / 不合格）
+- **批量插入**：所有表使用 `createMany`，inspection_data_item 按记录分批（每批 240 条）
+- **API 路由**：通过相对路径 `../../../../scripts/seed` 导入共享的 `seedDatabase` 函数
+
+### 待验证
+
+- [ ] 运行 `npx tsx scripts/seed.ts` 确认可正常插入数据
+- [ ] POST `/api/seed` 返回 `{ success: true, counts: { inspection_data_item: 4800, ... } }`
+- [ ] 查询数据库确认 13 张表数据完整
+- [ ] ESLint 检查通过

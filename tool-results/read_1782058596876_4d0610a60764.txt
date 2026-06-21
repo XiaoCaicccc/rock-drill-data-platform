@@ -1,0 +1,772 @@
+     1→import { db } from '@/lib/db'
+     2→import { NextResponse } from 'next/server'
+     3→
+     4→// ============================================================
+     5→//  参数定义类型
+     6→// ============================================================
+     7→
+     8→// 数值参数: [参数名, 参数编码, 单位, 标准下限, 标准上限, 最优下限, 最优上限]
+     9→type NumP = [string, string, string, number, number, number, number]
+    10→// 选项参数: [参数名, 参数编码, 选项列表]
+    11→type OptP = [string, string, string[]]
+    12→
+    13→// ============================================================
+    14→//  6 大类零件检测参数（每类严格 40 项）
+    15→// ============================================================
+    16→
+    17→const CATEGORY_PARAMS: Record<string, { num: NumP[]; opt: OptP[] }> = {
+    18→  ZT: {
+    19→    num: [
+    20→      ['外径D', 'OD_D', 'mm', 47.5, 48.5, 47.8, 48.2],
+    21→      ['内径d', 'ID_d', 'mm', 18.0, 19.0, 18.3, 18.7],
+    22→      ['总长度L', 'LEN_L', 'mm', 280, 285, 281, 283],
+    23→      ['头部长度L1', 'LEN_L1', 'mm', 85, 90, 86, 89],
+    24→      ['螺纹长度L2', 'LEN_L2', 'mm', 50, 55, 51, 54],
+    25→      ['合金齿高度h', 'TOOTH_H', 'mm', 5.0, 6.0, 5.3, 5.7],
+    26→      ['齿间距p', 'TOOTH_P', 'mm', 12.0, 13.0, 12.3, 12.7],
+    27→      ['排粉槽深度', 'GROOVE_D', 'mm', 3.0, 4.0, 3.3, 3.7],
+    28→      ['排粉槽宽度', 'GROOVE_W', 'mm', 6.0, 7.0, 6.3, 6.7],
+    29→      ['冲击端面角度', 'FACE_ANG', '°', 108, 112, 109, 111],
+    30→      ['螺纹中径', 'THREAD_PD', 'mm', 21.5, 22.0, 21.7, 21.9],
+    31→      ['螺纹螺距', 'THREAD_P', 'mm', 2.28, 2.32, 2.29, 2.31],
+    32→      ['重量', 'WT', 'g', 1850, 1950, 1880, 1920],
+    33→      ['硬度HRC-齿部', 'HRC_TOOTH', 'HRC', 38, 45, 40, 43],
+    34→      ['硬度HRC-体部', 'HRC_BODY', 'HRC', 35, 42, 37, 40],
+    35→      ['粗糙度Ra-外圆', 'RA_OD', 'μm', 0, 3.2, 0, 1.6],
+    36→      ['粗糙度Ra-内孔', 'RA_ID', 'μm', 0, 3.2, 0, 1.6],
+    37→      ['粗糙度Ra-端面', 'RA_FACE', 'μm', 0, 3.2, 0, 1.6],
+    38→      ['圆度', 'ROUND', 'mm', 0, 0.04, 0, 0.02],
+    39→      ['圆柱度', 'CYLIN', 'mm', 0, 0.05, 0, 0.025],
+    40→      ['直线度', 'STRAIGHT', 'mm/m', 0, 0.08, 0, 0.04],
+    41→      ['同轴度', 'CONCEN', 'mm', 0, 0.06, 0, 0.03],
+    42→      ['径向跳动', 'RUNOUT_R', 'mm', 0, 0.04, 0, 0.02],
+    43→      ['端面跳动', 'RUNOUT_T', 'mm', 0, 0.05, 0, 0.03],
+    44→      ['碳化钨含量', 'WC_PCT', '%', 85, 92, 87, 91],
+    45→      ['钴含量', 'CO_PCT', '%', 8, 12, 9, 11],
+    46→      ['抗弯强度', 'BEND_STR', 'MPa', 1800, 2500, 2000, 2400],
+    47→      ['冲击韧性', 'IMPACT', 'J/cm²', 3.0, 6.0, 4.0, 5.5],
+    48→      ['脱碳层深度', 'DECARB', 'mm', 0, 0.15, 0, 0.08],
+    49→      ['耐磨层厚度', 'WEAR_THK', 'mm', 0.8, 1.5, 1.0, 1.3],
+    50→      ['尺寸稳定性', 'DIM_STAB', 'mm', 0, 0.02, 0, 0.01],
+    51→      ['装配间隙', 'FIT_GAP', 'mm', 0.02, 0.10, 0.04, 0.08],
+    52→    ],
+    53→    opt: [
+    54→      ['焊缝质量', 'WELD_Q', ['良好', '一般', '不合格']]
+    55→      ['金相组织', 'METAL', ['均匀细小', '正常', '粗大', '不合格']],
+    56→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+    57→      ['磁粉探伤', 'MT', ['无缺陷', '合格', '不合格']],
+    58→      ['超声波探伤', 'UT', ['无缺陷', '合格', '不合格']],
+    59→      ['螺纹规格检查', 'THREAD_CHK', ['符合', '不符合']],
+    60→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+    61→      ['耐磨试验', 'WEAR_TST', ['达标', '未达标']],
+    62→    ],
+    63→  },
+    64→  HS: {
+    65→    num: [
+    66→      ['外径D', 'OD_D', 'mm', 119.5, 120.5, 119.8, 120.2],
+    67→      ['内径d', 'ID_d', 'mm', 58.0, 60.0, 58.5, 59.5],
+    68→      ['总长度L', 'LEN_L', 'mm', 278, 282, 279, 281],
+    69→      ['活塞杆直径D1', 'ROD_D1', 'mm', 59.5, 60.5, 59.8, 60.2],
+    70→      ['活塞头直径D2', 'HEAD_D2', 'mm', 119.0, 120.0, 119.3, 119.7],
+    71→      ['活塞头厚度H1', 'HEAD_H1', 'mm', 48, 52, 49, 51],
+    72→      ['活塞杆长度H2', 'ROD_H2', 'mm', 225, 235, 228, 232],
+    73→      ['密封槽宽度b', 'SEAL_W', 'mm', 4.0, 4.5, 4.1, 4.4],
+    74→      ['密封槽深度t', 'SEAL_D', 'mm', 2.5, 3.0, 2.6, 2.9],
+    75→      ['密封槽数量', 'SEAL_N', '个', 3, 5, 3, 5],
+    76→      ['重量', 'WT', 'kg', 8.5, 9.5, 8.8, 9.2],
+    77→      ['硬度HRC-表面', 'HRC_SURF', 'HRC', 58, 64, 60, 63],
+    78→      ['硬度HRC-芯部', 'HRC_CORE', 'HRC', 30, 38, 32, 36],
+    79→      ['渗碳层深度', 'CARB_DP', 'mm', 0.8, 1.5, 1.0, 1.3],
+    80→      ['粗糙度Ra-外圆', 'RA_OD', 'μm', 0, 0.8, 0, 0.4],
+    81→      ['粗糙度Ra-内孔', 'RA_ID', 'μm', 0, 1.6, 0, 0.8],
+    82→      ['粗糙度Ra-杆部', 'RA_ROD', 'μm', 0, 0.4, 0, 0.2],
+    83→      ['圆柱度', 'CYLIN', 'mm', 0, 0.03, 0, 0.015],
+    84→      ['圆度', 'ROUND', 'mm', 0, 0.02, 0, 0.01],
+    85→      ['直线度', 'STRAIGHT', 'mm/m', 0, 0.04, 0, 0.02],
+    86→      ['同轴度', 'CONCEN', 'mm', 0, 0.03, 0, 0.015],
+    87→      ['径向跳动', 'RUNOUT_R', 'mm', 0, 0.025, 0, 0.012],
+    88→      ['端面跳动', 'RUNOUT_T', 'mm', 0, 0.02, 0, 0.01],
+    89→      ['密封面平面度', 'SEAL_FLAT', 'mm', 0, 0.02, 0, 0.01],
+    90→      ['密封面粗糙度', 'RA_SEAL', 'μm', 0, 0.8, 0, 0.4],
+    91→      ['螺纹中径', 'THREAD_PD', 'mm', 59.0, 60.0, 59.3, 59.7],
+    92→      ['抗拉强度', 'TENSILE', 'MPa', 1100, 1400, 1200, 1350],
+    93→      ['屈服强度', 'YIELD', 'MPa', 850, 1100, 900, 1050],
+    94→      ['延伸率', 'ELONG', '%', 10, 16, 12, 15],
+    95→      ['冲击韧性', 'IMPACT', 'J/cm²', 60, 100, 70, 95],
+    96→      ['疲劳寿命', 'FATIGUE', '万次', 50, 120, 80, 110],
+    97→      ['尺寸稳定性', 'DIM_STAB', 'mm', 0, 0.015, 0, 0.008],
+    98→      ['螺纹规格检查', 'THREAD_CHK', ['符合', '不符合']]
+    99→      ['磁粉探伤', 'MT', ['无缺陷', '合格', '不合格']],
+   100→      ['超声波探伤', 'UT', ['无缺陷', '合格', '不合格']],
+   101→      ['金相组织', 'METAL', ['均匀细小', '正常', '粗大']],
+   102→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+   103→      ['装配检验', 'ASSY_CHK', ['合格', '不合格']],
+   104→      ['耐磨试验', 'WEAR_TST', ['合格', '不合格']],
+   105→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+   106→    ],
+   107→  },
+   108→  QG: {
+   109→    num: [
+   110→      ['缸体内径D', 'CYL_ID', 'mm', 119.8, 120.2, 119.9, 120.1],
+   111→      ['缸体外径D1', 'CYL_OD', 'mm', 149.0, 151.0, 149.5, 150.5],
+   112→      ['总长度L', 'LEN_L', 'mm', 398, 402, 399, 401],
+   113→      ['缸盖厚度H1', 'HEAD_H1', 'mm', 38, 42, 39, 41],
+   114→      ['法兰外径D2', 'FLG_OD', 'mm', 179.0, 181.0, 179.5, 180.5],
+   115→      ['法兰厚度H2', 'FLG_H2', 'mm', 18, 22, 19, 21],
+   116→      ['螺栓孔分布圆D3', 'BOLT_PCD', 'mm', 168, 172, 169, 171],
+   117→      ['螺栓孔直径d', 'BOLT_D', 'mm', 12.5, 13.5, 12.8, 13.2],
+   118→      ['配气孔直径d1', 'GAS_D', 'mm', 8.0, 9.0, 8.3, 8.7],
+   119→      ['配气孔位置度', 'GAS_POS', 'mm', 0, 0.15, 0, 0.08],
+   120→      ['进气口直径d2', 'IN_D', 'mm', 24.5, 25.5, 24.8, 25.2],
+   121→      ['排气口直径d3', 'OUT_D', 'mm', 19.5, 20.5, 19.8, 20.2],
+   122→      ['重量', 'WT', 'kg', 32, 36, 33, 35],
+   123→      ['硬度HRC-内壁', 'HRC_IN', 'HRC', 45, 55, 48, 52],
+   124→      ['硬度HRC-外壁', 'HRC_OUT', 'HRC', 22, 30, 24, 28],
+   125→      ['渗氮层深度', 'NITR_DP', 'mm', 0.3, 0.6, 0.35, 0.55],
+   126→      ['粗糙度Ra-内壁', 'RA_IN', 'μm', 0, 0.8, 0, 0.4],
+   127→      ['粗糙度Ra-外壁', 'RA_OUT', 'μm', 0, 3.2, 0, 1.6],
+   128→      ['圆柱度', 'CYLIN', 'mm', 0, 0.025, 0, 0.012],
+   129→      ['圆度', 'ROUND', 'mm', 0, 0.015, 0, 0.008],
+   130→      ['直线度', 'STRAIGHT', 'mm/m', 0, 0.05, 0, 0.025],
+   131→      ['同轴度', 'CONCEN', 'mm', 0, 0.04, 0, 0.02],
+   132→      ['内壁径向跳动', 'RUNOUT_IN', 'mm', 0, 0.02, 0, 0.01],
+   133→      ['法兰端面跳动', 'RUNOUT_FLG', 'mm', 0, 0.03, 0, 0.015],
+   134→      ['法兰端面平面度', 'FLG_FLAT', 'mm', 0, 0.02, 0, 0.01],
+   135→      ['水压试验', 'HYDRO', 'MPa', 1.2, 1.5, 1.25, 1.45],
+   136→      ['抗拉强度', 'TENSILE', 'MPa', 500, 650, 530, 620],
+   137→      ['延伸率', 'ELONG', '%', 18, 28, 20, 26],
+   138→      ['螺栓孔数量', 'BOLT_N', '个', 6, 8, 6, 8],
+   139→      ['装配尺寸偏差', 'ASSY_DIM', 'mm', 0, 0.05, 0, 0.025],
+   140→      ['尺寸链误差', 'DIM_CHAIN', 'mm', 0, 0.03, 0, 0.015],
+   141→    ],
+   142→    opt: [
+   143→      ['螺纹孔精度', 'THREAD_ACC', ['6H', '6G', '不合格']],
+   144→      ['磁粉探伤', 'MT', ['无缺陷', '合格', '不合格']],
+   145→      ['超声波探伤', 'UT', ['无缺陷', '合格', '不合格']],
+   146→      ['气密性试验', 'AIR_TST', ['无泄漏', '微漏', '泄漏']],
+   147→      ['金相组织', 'METAL', ['均匀细小', '正常', '粗大']],
+   148→      ['表面处理质量', 'SURF_TRT', ['合格', '不合格']],
+   149→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+   150→      ['寿命试验', 'LIFE_TST', ['达标', '未达标']],
+   151→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+   152→    ],
+   153→  },
+   154→  FZ: {
+   155→    num: [
+   156→      ['阀体外径D', 'VALVE_OD', 'mm', 59.5, 60.5, 59.8, 60.2],
+   157→      ['阀体内径d', 'VALVE_ID', 'mm', 28.0, 29.0, 28.3, 28.7],
+   158→      ['阀芯直径D1', 'CORE_D', 'mm', 27.5, 28.5, 27.8, 28.2],
+   159→      ['阀体长度L', 'VALVE_L', 'mm', 78, 82, 79, 81],
+   160→      ['阀芯长度L1', 'CORE_L', 'mm', 58, 62, 59, 61],
+   161→      ['阀口直径d1', 'PORT_D', 'mm', 8.0, 9.0, 8.3, 8.7],
+   162→      ['密封面宽度b', 'SEAL_W', 'mm', 1.5, 2.5, 1.8, 2.2],
+   163→      ['弹簧自由高度H', 'SPR_H', 'mm', 24, 28, 25, 27],
+   164→      ['弹簧刚度K', 'SPR_K', 'N/mm', 2.5, 3.5, 2.8, 3.2],
+   165→      ['弹簧预压缩量', 'SPR_PRE', 'mm', 4, 8, 5, 7],
+   166→      ['重量', 'WT', 'g', 380, 420, 390, 410],
+   167→      ['硬度HRC-阀芯', 'HRC_CORE', 'HRC', 58, 64, 60, 63],
+   168→      ['硬度HRC-阀体', 'HRC_BODY', 'HRC', 28, 35, 30, 33],
+   169→      ['粗糙度Ra-密封面', 'RA_SEAL', 'μm', 0, 0.4, 0, 0.2],
+   170→      ['粗糙度Ra-阀芯', 'RA_CORE', 'μm', 0, 0.8, 0, 0.4],
+   171→      ['粗糙度Ra-阀体', 'RA_BODY', 'μm', 0, 1.6, 0, 0.8],
+   172→      ['圆柱度-阀芯', 'CYLIN_CORE', 'mm', 0, 0.01, 0, 0.005],
+   173→      ['圆柱度-阀体', 'CYLIN_BODY', 'mm', 0, 0.02, 0, 0.01],
+   174→      ['圆度-阀芯', 'ROUND_CORE', 'mm', 0, 0.008, 0, 0.004],
+   175→      ['圆度-阀体', 'ROUND_BODY', 'mm', 0, 0.015, 0, 0.008],
+   176→      ['同轴度', 'CONCEN', 'mm', 0, 0.02, 0, 0.01],
+   177→      ['密封面平面度', 'SEAL_FLAT', 'mm', 0, 0.01, 0, 0.005],
+   178→      ['阀芯直线度', 'CORE_STR', 'mm', 0, 0.015, 0, 0.008],
+   179→      ['配合间隙', 'FIT_GAP', 'mm', 0.02, 0.08, 0.03, 0.06],
+   180→      ['抗拉强度', 'TENSILE', 'MPa', 900, 1200, 1000, 1150],
+   181→      ['屈服强度', 'YIELD', 'MPa', 700, 950, 750, 900],
+   182→      ['延伸率', 'ELONG', '%', 12, 20, 14, 18],
+   183→      ['冲击韧性', 'IMPACT', 'J/cm²', 50, 80, 60, 75],
+   184→      ['疲劳寿命', 'FATIGUE', '万次', 30, 80, 50, 70],
+   185→      ['尺寸稳定性', 'DIM_STAB', 'mm', 0, 0.01, 0, 0.005],
+   186→      ['清洁度', 'CLEAN', 'mg', 0, 5, 0, 2],
+   187→    ],
+   188→    opt: [
+   189→      ['磁粉探伤', 'MT', ['无缺陷', '合格', '不合格']],
+   190→      ['超声波探伤', 'UT', ['无缺陷', '合格', '不合格']],
+   191→      ['金相组织', 'METAL', ['均匀细小', '正常', '粗大']],
+   192→      ['弹簧疲劳试验', 'SPR_FAT', ['合格', '不合格']],
+   193→      ['密封性试验', 'SEAL_TST', ['无泄漏', '合格', '不合格']],
+   194→      ['动作灵活性', 'ACTION', ['灵活', '卡滞', '不合格']],
+   195→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+   196→      ['装配检验', 'ASSY_CHK', ['合格', '不合格']],
+   197→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+   198→    ],
+   199→  },
+   200→  ZC: {
+   201→    num: [
+   202→      ['内径d', 'ID_d', 'mm', 59.95, 60.05, 59.98, 60.02],
+   203→      ['外径D', 'OD_D', 'mm', 89.9, 90.1, 89.95, 90.05],
+   204→      ['宽度B', 'WD_B', 'mm', 21.9, 22.1, 21.95, 22.05],
+   205→      ['内圈宽度B1', 'IR_B', 'mm', 21.9, 22.1, 21.95, 22.05],
+   206→      ['外圈宽度B2', 'OR_B', 'mm', 21.9, 22.1, 21.95, 22.05],
+   207→      ['滚子直径', 'ROLLER_D', 'mm', 8.9, 9.1, 8.95, 9.05],
+   208→      ['滚子长度', 'ROLLER_L', 'mm', 12.9, 13.1, 12.95, 13.05],
+   209→      ['滚子数量', 'ROLLER_N', '个', 9, 11, 10, 10],
+   210→      ['保持架宽度', 'CAGE_W', 'mm', 3.5, 4.5, 3.8, 4.2],
+   211→      ['保持架外径', 'CAGE_OD', 'mm', 74, 76, 74.5, 75.5],
+   212→      ['重量', 'WT', 'g', 380, 420, 390, 410],
+   213→      ['硬度HRC-内圈', 'HRC_IR', 'HRC', 60, 65, 61, 64],
+   214→      ['硬度HRC-外圈', 'HRC_OR', 'HRC', 58, 63, 59, 62],
+   215→      ['硬度HRC-滚子', 'HRC_ROLLER', 'HRC', 62, 66, 63, 65],
+   216→      ['粗糙度Ra-内径', 'RA_ID', 'μm', 0, 0.4, 0, 0.2],
+   217→      ['粗糙度Ra-外径', 'RA_OD', 'μm', 0, 0.4, 0, 0.2],
+   218→      ['粗糙度Ra-端面', 'RA_FACE', 'μm', 0, 0.8, 0, 0.4],
+   219→      ['内圈圆柱度', 'CYLIN_IR', 'mm', 0, 0.008, 0, 0.004],
+   220→      ['外圈圆柱度', 'CYLIN_OR', 'mm', 0, 0.01, 0, 0.005],
+   221→      ['内圈圆度', 'ROUND_IR', 'mm', 0, 0.006, 0, 0.003],
+   222→      ['外圈圆度', 'ROUND_OR', 'mm', 0, 0.008, 0, 0.004],
+   223→      ['内圈径向跳动', 'RUNOUT_IR', 'mm', 0, 0.01, 0, 0.005],
+   224→      ['外圈径向跳动', 'RUNOUT_OR', 'mm', 0, 0.015, 0, 0.008],
+   225→      ['轴向游隙', 'AXIAL_CLR', 'mm', 0.05, 0.15, 0.08, 0.12],
+   226→      ['径向游隙', 'RAD_CLR', 'mm', 0.02, 0.06, 0.03, 0.05],
+   227→      ['滚子圆度', 'ROUND_ROLLER', 'mm', 0, 0.003, 0, 0.0015],
+   228→      ['滚子直径差', 'ROLLER_DIFF', 'mm', 0, 0.005, 0, 0.002],
+   229→      ['抗拉强度', 'TENSILE', 'MPa', 1800, 2200, 1900, 2100],
+   230→      ['冲击韧性', 'IMPACT', 'J/cm²', 20, 40, 25, 35],
+   231→      ['疲劳寿命', 'FATIGUE', '万次', 100, 300, 150, 280],
+   232→      ['温升试验', 'TEMP_RISE', '°C', 0, 35, 0, 25],
+   233→    ],
+   234→    opt: [
+   235→      ['磁粉探伤', 'MT', ['无缺陷', '合格', '不合格']],
+   236→      ['超声波探伤', 'UT', ['无缺陷', '合格', '不合格']],
+   237→      ['金相组织', 'METAL', ['均匀细小', '正常', '粗大']],
+   238→      ['振动测试', 'VIB_TST', ['合格', '不合格']],
+   239→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+   240→      ['装配检验', 'ASSY_CHK', ['合格', '不合格']],
+   241→      ['防锈处理', 'RUST_TRT', ['合格', '不合格']],
+   242→      ['清洁度', 'CLEAN', ['合格', '不合格']],
+   243→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+   244→    ],
+   245→  },
+   246→  MF: {
+   247→    num: [
+   248→      ['内径d', 'ID_d', 'mm', 59.5, 60.5, 59.7, 60.3],
+   249→      ['外径D', 'OD_D', 'mm', 79.0, 81.0, 79.3, 80.7],
+   250→      ['截面直径W', 'SEC_W', 'mm', 9.5, 10.5, 9.7, 10.3],
+   251→      ['自由内径', 'FREE_ID', 'mm', 55, 58, 56, 57],
+   252→      ['自由外径', 'FREE_OD', 'mm', 85, 90, 86, 89],
+   253→      ['截面高度H', 'SEC_H', 'mm', 9.5, 10.5, 9.8, 10.2],
+   254→      ['唇口厚度', 'LIP_THK', 'mm', 0.8, 1.5, 1.0, 1.3],
+   255→      ['唇口角度', 'LIP_ANG', '°', 20, 30, 22, 28],
+   256→      ['背部厚度', 'BACK_THK', 'mm', 2.0, 3.0, 2.3, 2.7],
+   257→      ['弹簧槽直径', 'SPR_GROOVE', 'mm', 1.0, 1.5, 1.1, 1.4],
+   258→      ['弹簧直径', 'SPR_D', 'mm', 0.8, 1.2, 0.9, 1.1],
+   259→      ['重量', 'WT', 'g', 28, 35, 30, 33],
+   260→      ['硬度IRHD', 'IRHD', 'IRHD', 70, 90, 75, 85],
+   261→      ['硬度-唇部', 'IRHD_LIP', 'IRHD', 75, 92, 78, 88],
+   262→      ['硬度-体部', 'IRHD_BODY', 'IRHD', 65, 85, 70, 80],
+   263→      ['拉伸强度', 'TENSILE', 'MPa', 10, 25, 15, 22],
+   264→      ['扯断伸长率', 'ELONG', '%', 200, 500, 300, 450],
+   265→      ['压缩永久变形', 'COMP_DEF', '%', 0, 30, 0, 20],
+   266→      ['热空气老化', 'AGING_TEMP', '°C', 100, 120, 105, 115],
+   267→      ['压缩变形量', 'COMP_AMT', '%', 5, 25, 8, 18],
+   268→      ['回弹率', 'REBOUND', '%', 40, 80, 55, 75],
+   269→      ['摩擦系数', 'FRICTION', '', 0.2, 0.6, 0.3, 0.5],
+   270→      ['耐压试验', 'PRES_TST', 'MPa', 1.0, 1.5, 1.1, 1.4],
+   271→      ['泄漏量', 'LEAKAGE', 'ml/h', 0, 5, 0, 2],
+   272→      ['尺寸稳定性', 'DIM_STAB', '%', 0, 5, 0, 3],
+   273→      ['低温脆性', 'COLD_BRIT', '°C', -40, -20, -38, -22],
+   274→      ['高温压缩', 'HT_COMP', '°C', 100, 130, 105, 125],
+   275→      ['密度', 'DENSITY', 'g/cm³', 1.1, 1.3, 1.15, 1.25],
+   276→      ['结合强度', 'BOND_STR', 'N/cm', 15, 30, 20, 28],
+   277→      ['表面粗糙度', 'RA_SURF', 'μm', 0, 3.2, 0, 1.6],
+   278→      ['同心度', 'CONCEN', 'mm', 0, 0.15, 0, 0.08],
+   279→      ['老化后硬度变化', 'AGING_HD', 'IRHD', -8, 8, -5, 5],
+   280→    ],
+   281→    opt: [
+   282→      ['唇口完整性', 'LIP_INT', ['完整', '缺陷', '不合格']],
+   283→      ['耐介质试验', 'MEDIA_TST', ['无异常', '合格', '不合格']],
+   284→      ['弹簧匹配性', 'SPR_FIT', ['匹配', '不匹配']],
+   285→      ['批次一致性', 'BATCH_CST', ['一致', '不一致']],
+   286→      ['外观全检', 'FULL_VIS', ['合格', '不合格']],
+   287→      ['包装检查', 'PKG_CHK', ['合格', '不合格']],
+   288→      ['外观检查', 'VISUAL', ['合格', '不合格']],
+   289→      ['综合判定', 'VERDICT', ['合格', '不合格', '待复检']],
+   290→      ['装配检验', 'ASSY_CHK', ['合格', '不合格']],
+   291→    ],
+   292→
+   293→// 验证每类 40 项
+   294→for (const [code, { num, opt }] of Object.entries(CATEGORY_PARAMS)) {
+   295→  const total = num.length + opt.length
+   296→  if (total !== 40) throw new Error(`类别 ${code} 参数总数 ${total} ≠ 40`)
+   297→}
+   298→
+   299→// ============================================================
+   300→//  工具函数
+   301→// ============================================================
+   302→
+   303→/** 生成数值型检测值，约 85% 在标准区间内 */
+   304→function genNumValue(smin: number, smax: number, omin: number, omax: number) {
+   305→  const range = smax - smin
+   306→  let value: number
+   307→  if (Math.random() < 0.85) {
+   308→    value = smin + Math.random() * range
+   309→  } else {
+   310→    const overflow = range * 0.1
+   311→    value =
+   312→      Math.random() < 0.5
+   313→        ? smin - Math.random() * overflow
+   314→        : smax + Math.random() * overflow
+   315→  }
+   316→  const is_qualified = value >= smin && value <= smax
+   317→  const is_optimal = value >= omin && value <= omax
+   318→  return { value: Math.round(value * 10000) / 10000, is_qualified, is_optimal }
+   319→}
+   320→
+   321→/** 生成选项型检测值 */
+   322→function genOptValue(options: string[]) {
+   323→  // 90% 取第一个（合格项）
+   324→  const text = Math.random() < 0.9 ? options[0] : options[Math.floor(Math.random() * options.length)]
+   325→  const is_qualified = text === options[0]
+   326→  return { text, is_qualified, is_optimal: is_qualified }
+   327→}
+   328→
+   329→/** 选项型"合格"值列表（用于 is_qualified 判定） */
+   330→const QUALIFIED_OPTIONS = new Set([
+   331→  '良好', '均匀细小', '正常', '合格', '无缺陷', '无泄漏', '达标',
+   332→  '符合', '完整', '匹配', '一致', '灵活', '6H', '微漏',
+   333→])
+   334→
+   335→function isOptQualified(text: string): boolean {
+   336→  return QUALIFIED_OPTIONS.has(text)
+   337→}
+   338→
+   339→// ============================================================
+   340→//  种子 API
+   341→// ============================================================
+   342→
+   343→export async function POST() {
+   344→  const t0 = Date.now()
+   345→
+   346→  try {
+   347→    // ── 1. 幂等清空（按外键依赖倒序） ──
+   348→    await db.meeting_resolution.deleteMany()
+   349→    await db.attendance_record.deleteMany()
+   350→    await db.document.deleteMany()
+   351→    await db.meeting.deleteMany()
+   352→    await db.task.deleteMany()
+   353→    await db.analysis_report.deleteMany()
+   354→    await db.inspection_data_item.deleteMany()
+   355→    await db.inspection_record.deleteMany()
+   356→    await db.parameter_item.deleteMany()
+   357→    await db.parameter_template.deleteMany()
+   358→    await db.part.deleteMany()
+   359→    await db.equipment.deleteMany()
+   360→    await db.part_category.deleteMany()
+   361→
+   362→    // ── 2. 零件类别 ──
+   363→    const categoryDefs = [
+   364→      { name: '钻头', code: 'ZT', description: '凿岩机钻头类零部件，包含十字钻头、球齿钻头等' },
+   365→      { name: '活塞', code: 'HS', description: '凿岩机活塞组件，包含冲击活塞、配气活塞等' },
+   366→      { name: '气缸', code: 'QG', description: '凿岩机气缸组件，包含前缸体、后缸体等' },
+   367→      { name: '阀组', code: 'FZ', description: '凿岩机配气阀组，包含阀体、阀芯、弹簧等' },
+   368→      { name: '轴承', code: 'ZC', description: '凿岩机用轴承，包含滚针轴承、调心滚子轴承等' },
+   369→      { name: '密封件', code: 'MF', description: '凿岩机密封组件，包含O型圈、油封、防尘圈等' },
+   370→    ]
+   371→    const categories = await Promise.all(
+   372→      categoryDefs.map((c) =>
+   373→        db.part_category.create({
+   374→          data: { name: c.name, code: c.code, description: c.description, standard_param_count: 40 },
+   375→        }),
+   376→      ),
+   377→    )
+   378→
+   379→    // ── 3. 设备档案 ──
+   380→    const equipmentDefs = [
+   381→      { machine_no: 'YT28-2025-001', model: 'YT28', manufacturer: '天水凿岩机厂', production_date: new Date('2024-06-15'), status: '在用', current_location: '贵州某隧道项目', total_working_hours: 2350 },
+   382→      { machine_no: 'HY200-2025-002', model: 'HY200', manufacturer: '阿特拉斯·科普柯', production_date: new Date('2023-11-20'), status: '维修中', current_location: '维修车间', total_working_hours: 4180 },
+   383→      { machine_no: 'DZ900-2025-003', model: 'DZ900', manufacturer: '山特维克', production_date: new Date('2022-03-10'), status: '库存', current_location: '配件仓库', total_working_hours: 8560 },
+   384→    ]
+   385→    const equipmentList = await Promise.all(
+   386→      equipmentDefs.map((e) => db.equipment.create({ data: { ...e } })),
+   387→    )
+   388→
+   389→    // ── 4. 零件档案（12 件，每类别 2 件） ──
+   390→    // 设备1(ZT×2 + HS×2)  设备2(QG×2 + FZ×2)  设备3(ZC×2 + MF×2)
+   391→    const partDefs = [
+   392→      // 设备 1: 钻头
+   393→      { code: 'ZT-001', name: '十字钻头-A1', category_id: categories[0].id, equipment_id: equipmentList[0].id, specification: 'φ48mm', material: '42CrMo+YG15C', supplier: '三一智装', working_hours: 1850, status: '在用' },
+   394→      { code: 'ZT-002', name: '球齿钻头-A2', category_id: categories[0].id, equipment_id: equipmentList[0].id, specification: 'φ48mm', material: '40CrNiMo+YG8C', supplier: '徐工供应', working_hours: 1200, status: '在用' },
+   395→      // 设备 1: 活塞
+   396→      { code: 'HS-001', name: '冲击活塞-A1', category_id: categories[1].id, equipment_id: equipmentList[0].id, specification: 'φ120×280mm', material: '20CrMnTi渗碳', supplier: '自有生产', working_hours: 1650, status: '在用' },
+   397→      { code: 'HS-002', name: '配气活塞-A2', category_id: categories[1].id, equipment_id: equipmentList[0].id, specification: 'φ100×220mm', material: '40Cr表面淬火', supplier: '自有生产', working_hours: 980, status: '在用' },
+   398→      // 设备 2: 气缸
+   399→      { code: 'QG-001', name: '前缸体-B1', category_id: categories[2].id, equipment_id: equipmentList[1].id, specification: 'φ150×400mm', material: 'ZG270-500', supplier: '自有生产', working_hours: 3200, status: '在用' },
+   400→      { code: 'QG-002', name: '后缸体-B2', category_id: categories[2].id, equipment_id: equipmentList[1].id, specification: 'φ150×400mm', material: 'ZG270-500', supplier: '自有生产', working_hours: 3200, status: '待检' },
+   401→      // 设备 2: 阀组
+   402→      { code: 'FZ-001', name: '配气阀组-B1', category_id: categories[3].id, equipment_id: equipmentList[1].id, specification: 'φ60×80mm', material: '40Cr+GCr15', supplier: '中联供应', working_hours: 2800, status: '在用' },
+   403→      { code: 'FZ-002', name: '换向阀-B2', category_id: categories[3].id, equipment_id: equipmentList[1].id, specification: 'φ55×70mm', material: '20CrMnTi', supplier: '山推供应', working_hours: 1500, status: '已更换' },
+   404→      // 设备 3: 轴承
+   405→      { code: 'ZC-001', name: '主轴承-C1', category_id: categories[4].id, equipment_id: equipmentList[2].id, specification: '60×90×22mm', material: 'GCr15', supplier: '进口SKF', working_hours: 7500, status: '在用' },
+   406→      { code: 'ZC-002', name: '前端轴承-C2', category_id: categories[4].id, equipment_id: equipmentList[2].id, specification: '80×130×28mm', material: 'GCr15SiMn', supplier: '进口NSK', working_hours: 6200, status: '在用' },
+   407→      // 设备 3: 密封件
+   408→      { code: 'MF-001', name: '活塞密封组-C1', category_id: categories[5].id, equipment_id: equipmentList[2].id, specification: 'φ120×φ150mm', material: 'NBR+PU', supplier: '鼎基密封', working_hours: 5400, status: '报废' },
+   409→      { code: 'MF-002', name: '缸体密封组-C2', category_id: categories[5].id, equipment_id: equipmentList[2].id, specification: 'φ180×φ210mm', material: 'FKM', supplier: '鼎基密封', working_hours: 3800, status: '在用' },
+   410→    ]
+   411→    const parts = await Promise.all(
+   412→      partDefs.map((p) =>
+   413→        db.part.create({ data: { ...p, install_date: new Date('2024-07-01') } }),
+   414→      ),
+   415→    )
+   416→
+   417→    // ── 5. 参数模板 + 参数项（每类别 40 项） ──
+   418→    const catCodeMap = Object.fromEntries(categories.map((c) => [c.id, c.code]))
+   419→
+   420→    const paramItemIdsByCategory: Record<string, string[]> = {}
+   421→
+   422→    for (const cat of categories) {
+   423→      const code = catCodeMap[cat.id]
+   424→      const defs = CATEGORY_PARAMS[code]
+   425→      if (!defs) throw new Error(`未找到类别 ${code} 的参数定义`)
+   426→
+   427→      const template = await db.parameter_template.create({
+   428→        data: { category_id: cat.id, name: `${cat.name}检测模板`, version: 1 },
+   429→      })
+   430→
+   431→      const itemData = []
+   432→      let sortOrder = 0
+   433→
+   434→      for (const [name, pcode, unit, smin, smax, omin, omax] of defs.num) {
+   435→        itemData.push({
+   436→          template_id: template.id,
+   437→          param_name: name,
+   438→          param_code: pcode,
+   439→          unit,
+   440→          data_type: 'number',
+   441→          standard_min: smin,
+   442→          standard_max: smax,
+   443→          optimal_min: omin,
+   444→          optimal_max: omax,
+   445→          sort_order: sortOrder++,
+   446→          options: null,
+   447→        })
+   448→      }
+   449→      for (const [name, pcode, opts] of defs.opt) {
+   450→        itemData.push({
+   451→          template_id: template.id,
+   452→          param_name: name,
+   453→          param_code: pcode,
+   454→          unit: '',
+   455→          data_type: 'option',
+   456→          standard_min: null,
+   457→          standard_max: null,
+   458→          optimal_min: null,
+   459→          optimal_max: null,
+   460→          sort_order: sortOrder++,
+   461→          options: JSON.stringify(opts),
+   462→        })
+   463→      }
+   464→
+   465→      const created = await db.parameter_item.createMany({ data: itemData })
+   466→      // 获取刚创建的参数项 ID（通过模板查询）
+   467→      const items = await db.parameter_item.findMany({
+   468→        where: { template_id: template.id },
+   469→        orderBy: { sort_order: 'asc' },
+   470→        select: { id: true },
+   471→      })
+   472→      paramItemIdsByCategory[cat.id] = items.map((i) => i.id)
+   473→    }
+   474→
+   475→    // ── 6. 检测记录 + 检测数据明细（核心：≥4800 行） ──
+   476→    const inspectors = ['张伟', '李明', '王芳', '刘强', '陈静']
+   477→
+   478→    // 按设备分组零件
+   479→    const partsByEquip: Record<string, typeof parts> = {}
+   480→    for (const p of parts) {
+   481→      if (!p.equipment_id) continue
+   482→      if (!partsByEquip[p.equipment_id]) partsByEquip[p.equipment_id] = []
+   483→      partsByEquip[p.equipment_id].push(p)
+   484→    }
+   485→
+   486→    // 建立零件 → 参数项 ID 映射（通过零件的类别）
+   487→    const paramMapByPart: Record<string, string[]> = {}
+   488→    for (const p of parts) {
+   489→      paramMapByPart[p.id] = paramItemIdsByCategory[p.category_id]
+   490→    }
+   491→
+   492→    // 检测计划：设备1(在用) 18次 + 设备2(维修中) 8次 + 设备3(库存) 4次 = 30次
+   493→    // 每次检测该设备的所有零件（4件）× 40参数 = 160条明细
+   494→    // 30 × 160 = 4800 条
+   495→    const inspectionSchedule: Array<{ equipment_id: string; date: Date }> = []
+   496→
+   497→    // 设备1：2025-04 ~ 2025-05，约每3-4天一次，18次
+   498→    for (let i = 0; i < 18; i++) {
+   499→      const dayOffset = Math.round((i / 17) * 59) // 0~59天
+   500→      inspectionSchedule.push({
+   501→        equipment_id: equipmentList[0].id,
+   502→        date: new Date(2025, 3, 1 + dayOffset),
+   503→      })
+   504→    }
+   505→    // 设备2：8次
+   506→    for (let i = 0; i < 8; i++) {
+   507→      const dayOffset = Math.round((i / 7) * 59)
+   508→      inspectionSchedule.push({
+   509→        equipment_id: equipmentList[1].id,
+   510→        date: new Date(2025, 3, 1 + dayOffset),
+   511→      })
+   512→    }
+   513→    // 设备3：4次
+   514→    for (let i = 0; i < 4; i++) {
+   515→      const dayOffset = Math.round((i / 3) * 59)
+   516→      inspectionSchedule.push({
+   517→        equipment_id: equipmentList[2].id,
+   518→        date: new Date(2025, 3, 1 + dayOffset),
+   519→      })
+   520→    }
+   521→
+   522→    let recordIdx = 1
+   523→    let totalDataItems = 0
+   524→
+   525→    // 预加载所有参数项（含区间信息）
+   526→    const allParamItems = await db.parameter_item.findMany({
+   527→      select: { id: true, standard_min: true, standard_max: true, optimal_min: true, optimal_max: true, data_type: true, options: true },
+   528→    })
+   529→    const paramMap: Record<string, (typeof allParamItems)[number]> = Object.fromEntries(
+   530→      allParamItems.map((pi) => [pi.id, pi]),
+   531→    )
+   532→
+   533→    // 预加载各类别的参数定义（用于生成值）
+   534→    const catParamsByCode: Record<string, { num: NumP[]; opt: OptP[] }> = CATEGORY_PARAMS
+   535→
+   536→    for (const schedule of inspectionSchedule) {
+   537→      const eqParts = partsByEquip[schedule.equipment_id] ?? []
+   538→
+   539→      const recordNo = `JY-2025-${String(recordIdx).padStart(4, '0')}`
+   540→      const month = schedule.date.getMonth() + 1
+   541→      const week = Math.ceil(schedule.date.getDate() / 7)
+   542→      const batchNo = `PC-2025${String(month).padStart(2, '0')}-${String(week).padStart(2, '0')}`
+   543→
+   544→      const record = await db.inspection_record.create({
+   545→        data: {
+   546→          record_no: recordNo,
+   547→          equipment_id: schedule.equipment_id,
+   548→          inspector: inspectors[Math.floor(Math.random() * inspectors.length)],
+   549→          batch_no: batchNo,
+   550→          inspection_date: schedule.date,
+   551→          overall_result: '待检',
+   552→        },
+   553→      })
+   554→
+   555→      const batchData: Array<{
+   556→        record_id: string
+   557→        part_id: string
+   558→        param_item_id: string
+   559→        value_number: number | null
+   560→        value_text: string | null
+   561→        is_qualified: boolean
+   562→        is_optimal: boolean
+   563→      }> = []
+   564→
+   565→      let qualified = 0
+   566→      let total = 0
+   567→
+   568→      for (const part of eqParts) {
+   569→        const pItemIds = paramMapByPart[part.id] ?? []
+   570→        const catCode = catCodeMap[part.category_id]
+   571→        const catDefs = catParamsByCode[catCode]
+   572→
+   573→        // 构建该类别参数的编码→定义映射
+   574→        const numDefMap = new Map<string, NumP>()
+   575→        const optDefMap = new Map<string, OptP>()
+   576→        if (catDefs) {
+   577→          for (const d of catDefs.num) numDefMap.set(d[1], d)
+   578→          for (const d of catDefs.opt) optDefMap.set(d[1], d)
+   579→        }
+   580→
+   581→        for (let pi = 0; pi < pItemIds.length; pi++) {
+   582→          const pItem = paramMap[pItemIds[pi]]
+   583→          if (!pItem) continue
+   584→          total++
+   585→
+   586→          if (pItem.data_type === 'option' && pItem.options) {
+   587→            const opts = JSON.parse(pItem.options) as string[]
+   588→            const { text, is_qualified, is_optimal } = genOptValue(opts)
+   589→            if (is_qualified) qualified++
+   590→            batchData.push({
+   591→              record_id: record.id,
+   592→              part_id: part.id,
+   593→              param_item_id: pItemIds[pi],
+   594→              value_number: null,
+   595→              value_text: text,
+   596→              is_qualified,
+   597→              is_optimal,
+   598→            })
+   599→          } else {
+   600→            const smin = pItem.standard_min ?? 0
+   601→            const smax = pItem.standard_max ?? 0
+   602→            const omin = pItem.optimal_min ?? 0
+   603→            const omax = pItem.optimal_max ?? 0
+   604→            const { value, is_qualified, is_optimal } = genNumValue(smin, smax, omin, omax)
+   605→            if (is_qualified) qualified++
+   606→            batchData.push({
+   607→              record_id: record.id,
+   608→              part_id: part.id,
+   609→              param_item_id: pItemIds[pi],
+   610→              value_number: value,
+   611→              value_text: null,
+   612→              is_qualified,
+   613→              is_optimal,
+   614→            })
+   615→          }
+   616→        }
+   617→      }
+   618→
+   619→      // 批量写入（每批 500）
+   620→      for (let i = 0; i < batchData.length; i += 500) {
+   621→        await db.inspection_data_item.createMany({ data: batchData.slice(i, i + 500) })
+   622→        totalDataItems += Math.min(500, batchData.length - i)
+   623→      }
+   624→      // 修正最后一批计数
+   625→      if (batchData.length > 500) {
+   626→        totalDataItems = batchData.length * recordIdx // 简化：用累积方式
+   627→      }
+   628→
+   629→      // 更新整体结果
+   630→      const passRate = total > 0 ? qualified / total : 0
+   631→      const overall_result = passRate >= 0.95 ? '合格' : passRate >= 0.85 ? '待复检' : '不合格'
+   632→      await db.inspection_record.update({
+   633→        where: { id: record.id },
+   634→        data: { overall_result },
+   635→      })
+   636→
+   637→      recordIdx++
+   638→    }
+   639→
+   640→    // 精确统计
+   641→    totalDataItems = await db.inspection_data_item.count()
+   642→
+   643→    // ── 7. 分析报告 ──
+   644→    await db.analysis_report.createMany({
+   645→      data: [
+   646→        {
+   647→          report_no: 'BG-2025-04-YD001', title: '2025年4月凿岩机零部件质量分析月报',
+   648→          type: '月度分析', period: '2025-04', status: '已发布', author: '张伟',
+   649→          summary: '4月份共完成20次设备检测，覆盖12个零部件，检测参数3200项，整体合格率91.2%。',
+   650→          conclusion: '1. 加强气缸内壁粗糙度波动管控；2. 钻头钎焊质量稳定，继续保持。',
+   651→        },
+   652→        {
+   653→          report_no: 'BG-2025-05-YD001', title: '2025年5月凿岩机零部件质量分析月报',
+   654→          type: '月度分析', period: '2025-05', status: '已发布', author: '张伟',
+   655→          summary: '5月份共完成10次设备检测，整体合格率92.8%，较4月提升1.6个百分点。',
+   656→          conclusion: '5月质量指标持续向好。建议关注维修设备HY200-002各零件磨损数据。',
+   657→        },
+   658→        {
+   659→          report_no: 'BG-2025-Q2-JD001', title: '2025年Q2季度凿岩机零部件全生命周期分析报告',
+   660→          type: '季度分析', period: '2025-Q2', status: '草稿', author: '李明',
+   661→          summary: '第二季度整体质量稳中有升，零部件寿命指标达到设计标准的1.1倍。',
+   662→          conclusion: '建议下季度重点关注高磨损件寿命优化及新型密封材料应用对比。',
+   663→        },
+   664→        {
+   665→          report_no: 'BG-2025-ZX-001', title: '钻头类零部件专项寿命分析报告',
+   666→          type: '专项分析', period: '2025-H1', status: '已发布', author: '王芳',
+   667→          summary: '对十字钻头ZT-001和球齿钻头ZT-002进行连续跟踪，球齿钻头单位磨损率低于十字钻头32%。',
+   668→          conclusion: '球齿钻头性价比最优，建议高磨损工况优先选用。',
+   669→        },
+   670→      ],
+   671→    })
+   672→
+   673→    // ── 8. 部门任务 ──
+   674→    await db.task.createMany({
+   675→      data: [
+   676→        { title: '整理6月份检测数据台账', description: '汇总6月份所有零部件检测记录，核对数据完整性。', priority: '高', status: '进行中', task_type: '常规', assignee: '张伟', due_date: new Date('2025-07-05') },
+   677→        { title: '编制Q2季度分析报告', description: '基于4-6月检测数据完成第二季度全生命周期质量分析报告。', priority: '高', status: '待办', task_type: '常规', assignee: '李明', due_date: new Date('2025-07-10') },
+   678→        { title: '供应商质量数据汇总', description: '收集各供应商零部件检测数据，形成质量对比分析表。', priority: '中', status: '待办', task_type: '领导交办', assignee: '王芳', due_date: new Date('2025-07-15') },
+   679→        { title: '新检测标准学习培训', description: '组织部门人员学习GB/T 6379测量方法与结果标准。', priority: '低', status: '待办', task_type: '常规', assignee: '刘强', due_date: new Date('2025-07-20') },
+   680→        { title: '5月份不合格品原因分析', description: '对5月份不合格品进行分类统计和原因分析。', priority: '紧急', status: '已完成', task_type: '常规', assignee: '陈静', due_date: new Date('2025-07-03') },
+   681→      ],
+   682→    })
+   683→
+   684→    // ── 9. 会议 + 决议 ──
+   685→    const meeting1 = await db.meeting.create({
+   686→      data: {
+   687→        title: '4月份质量分析例会', meeting_date: new Date('2025, 4, 6, 9, 0'),
+   688→        location: '三楼会议室A', organizer: '张伟',
+   689→        participants: '张伟,李明,王芳,刘强,陈静',
+   690→        minutes_content: '1. 通报4月检测数据总体情况；2. 讨论气缸内壁粗糙度波动问题；3. 安排5月检测计划。',
+   691→        status: '已完成',
+   692→      },
+   693→    })
+   694→    const meeting2 = await db.meeting.create({
+   695→      data: {
+   696→        title: '5月份质量分析例会', meeting_date: new Date('2025, 5, 6, 9, 0'),
+   697→        location: '三楼会议室A', organizer: '张伟',
+   698→        participants: '张伟,李明,王芳,刘强,陈静',
+   699→        minutes_content: '1. 5月合格率提升至92.8%；2. 维修设备HY200-002送检结果分析；3. 部署球齿钻头寿命验证试验。',
+   700→        status: '已完成',
+   701→      },
+   702→    })
+   703→    await db.meeting_resolution.createMany({
+   704→      data: [
+   705→        { meeting_id: meeting1.id, content: '加强前缸体供应商内壁精加工工艺管控', responsible_person: '王芳', due_date: new Date('2025-04-20'), status: '已完成' },
+   706→        { meeting_id: meeting1.id, content: '编制钻头钎焊质量专项分析报告', responsible_person: '陈静', due_date: new Date('2025-04-15'), status: '已完成' },
+   707→        { meeting_id: meeting2.id, content: '推进球齿钻头与十字钻头对比寿命验证试验', responsible_person: '刘强', due_date: new Date('2025-06-30'), status: '待执行' },
+   708→      ],
+   709→    })
+   710→
+   711→    // ── 10. 文档 ──
+   712→    await db.document.createMany({
+   713→      data: [
+   714→        { title: '2025年4月质量分析月报', category: '报告', archived: true },
+   715→        { title: '钻头类专项寿命分析报告', category: '报告', archived: true },
+   716→      ],
+   717→    })
+   718→
+   719→    // ── 11. 考勤 ──
+   720→    const members = ['张伟', '李明', '王芳', '刘强', '陈静']
+   721→    const attData: Array<{ date: Date; member_name: string; status: string; remark: string | null }> = []
+   722→    for (let month = 4; month <= 5; month++) {
+   723→      const daysInMonth = month === 4 ? 30 : 31
+   724→      for (let day = 1; day <= daysInMonth; day++) {
+   725→        if (new Date(2025, month - 1, day).getDay() === 0) continue // 跳过周日
+   726→        if (new Date(2025, month - 1, day).getDay() === 6) continue // 跳过周六
+   727→        const date = new Date(2025, month - 1, day)
+   728→        for (const m of members) {
+   729→          const r = Math.random()
+   730→          let status: string, remark: string | null = null
+   731→          if (r < 0.88) { status = '出勤' }
+   732→          else if (r < 0.93) { status = '请假'; remark = '事假' }
+   733→          else if (r < 0.97) { status = '迟到'; remark = '迟到10分钟' }
+   734→          else { status = '出差'; remark = '供应商审核' }
+   735→          attData.push({ date, member_name: m, status, remark })
+   736→        }
+   737→      }
+   738→    }
+   739→    for (let i = 0; i < attData.length; i += 200) {
+   740→      await db.attendance_record.createMany({ data: attData.slice(i, i + 200) })
+   741→    }
+   742→
+   743→    // ── 返回统计 ──
+   744→    const elapsed = Date.now() - t0
+   745→    const counts = {
+   746→      part_category: await db.part_category.count(),
+   747→      equipment: await db.equipment.count(),
+   748→      part: await db.part.count(),
+   749→      parameter_template: await db.parameter_template.count(),
+   750→      parameter_item: await db.parameter_item.count(),
+   751→      inspection_record: await db.inspection_record.count(),
+   752→      inspection_data_item: totalDataItems,
+   753→      analysis_report: await db.analysis_report.count(),
+   754→      task: await db.task.count(),
+   755→      meeting: await db.meeting.count(),
+   756→      meeting_resolution: await db.meeting_resolution.count(),
+   757→      document: await db.document.count(),
+   758→      attendance_record: await db.attendance_record.count(),
+   759→    }
+   760→
+   761→    return NextResponse.json({
+   762→      success: true,
+   763→      message: '种子数据创建完成',
+   764→      elapsed: `${(elapsed / 1000).toFixed(1)}s`,
+   765→      counts,
+   766→    })
+   767→  } catch (error: unknown) {
+   768→    const message = error instanceof Error ? error.message : '未知错误'
+   769→    console.error('[SEED ERROR]', message)
+   770→    return NextResponse.json({ success: false, message }, { status: 500 })
+   771→  }
+   772→}
