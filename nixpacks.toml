@@ -1,0 +1,9 @@
+[phases.setup]
+nixPkgs = ["...", "openssl"]
+
+[phases.build]
+cmds = ["LIBSQL_CLIENT_BACKEND=wasm npm run build"]
+
+[variables]
+LIBSQL_CLIENT_BACKEND = "wasm"
+NODE_ENV = "production"
