@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client'
-import { PrismaLibSQL } from '@prisma/adapter-libsql'
+
 
 // ============================================================
 //  Types
@@ -822,11 +822,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
 // ============================================================
 
 async function main() {
-  const adapter = new PrismaLibSQL({
-    url: process.env.TURSO_DATABASE_URL!,
-    authToken: process.env.TURSO_AUTH_TOKEN,
-  })
-  const prisma = new PrismaClient({ adapter })
+  const prisma = new PrismaClient()
   try {
     const counts = await seedDatabase(prisma)
     console.log('\nDone. Total inspection_data_item:', counts.inspection_data_item)
