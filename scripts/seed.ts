@@ -835,4 +835,8 @@ async function main() {
   }
 }
 
-main()
+// Only run when executed directly (npx tsx scripts/seed.ts), not when imported
+import { fileURLToPath } from 'url'
+if (fileURLToPath(import.meta.url) === process.argv[1]) {
+  main()
+}
