@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "npx prisma generate && next build",
+    "build": "LIBSQL_CLIENT_BACKEND=wasm npx prisma generate && LIBSQL_CLIENT_BACKEND=wasm next build",
     "start": "next start",
     "lint": "eslint .",
     "db:push": "prisma db push",
