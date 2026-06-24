@@ -86,16 +86,20 @@ interface NavListProps {
   currentView: string
   expanded: boolean
   onNavigate: (key: NavItem['key']) => void
+  userRole?: string
 }
 
-function NavList({ currentView, expanded, onNavigate }: NavListProps) {
-  // 按分组标识分区，group 不为 null 的项作为分组标题
+function NavList({ currentView, expanded, onNavigate, userRole }: NavListProps) {
+  const visibleItems = useMemo(() => {
+    if (userRole === 'admin') return NAV_ITEMS
+    return NAV_ITEMS.filter((item) => !item.adminOnly)
+  }, [userRole])
+
   const sections = useMemo(() => {
     const result: Array<{ type: 'item'; item: NavItem } | { type: 'group'; label: string } | { type: 'separator' }> = []
 
-    NAV_ITEMS.forEach((item, index) => {
+    visibleItems.forEach((item, index) => {
       if (item.group !== null) {
-        // 插入分组标题
         if (index > 0) result.push({ type: 'separator' })
         result.push({ type: 'group', label: item.group })
       }
@@ -103,7 +107,7 @@ function NavList({ currentView, expanded, onNavigate }: NavListProps) {
     })
 
     return result
-  }, [])
+  }, [visibleItems])
 
   return (
     <nav className="flex flex-col gap-1 px-2">
@@ -143,7 +147,7 @@ function NavList({ currentView, expanded, onNavigate }: NavListProps) {
 // 桌面端侧边栏
 // ────────────────────────────────────────────────────────────
 
-function DesktopSidebar() {
+function DesktopSidebar({ userRole }: { userRole?: string }) {
   const { currentView, sidebarExpanded, toggleSidebar, setCurrentView } =
     useAppStore()
 
@@ -189,6 +193,7 @@ function DesktopSidebar() {
           currentView={currentView}
           expanded={sidebarExpanded}
           onNavigate={handleNavigate}
+          userRole={userRole}
         />
       </div>
 
@@ -218,7 +223,7 @@ function DesktopSidebar() {
 // 移动端侧边栏（Sheet 抽屉）
 // ────────────────────────────────────────────────────────────
 
-function MobileSidebar() {
+function MobileSidebar({ userRole }: { userRole?: string }) {
   const { currentView, mobileSheetOpen, setMobileSheetOpen, setCurrentView } =
     useAppStore()
 
@@ -251,6 +256,7 @@ function MobileSidebar() {
             currentView={currentView}
             expanded={true}
             onNavigate={handleNavigate}
+            userRole={userRole}
           />
         </div>
       </SheetContent>
@@ -262,14 +268,13 @@ function MobileSidebar() {
 // 导出的统一组件
 // ────────────────────────────────────────────────────────────
 
-export function AppSidebar() {
+export function AppSidebar({ userRole }: { userRole?: string }) {
   const isMobile = useIsMobile()
   const setMobileSheetOpen = useAppStore((s) => s.setMobileSheetOpen)
 
   return (
     <>
-      {isMobile ? <MobileSidebar /> : <DesktopSidebar />}
-      {/* 移动端汉堡按钮由 AppHeader 渲染，此处不渲染 */}
+      {isMobile ? <MobileSidebar userRole={userRole} /> : <DesktopSidebar userRole={userRole} />}
     </>
   )
 }

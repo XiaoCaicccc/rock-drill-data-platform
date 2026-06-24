@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
 
 // ============================================================
@@ -810,6 +811,22 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   )
   await prisma.attendance_record.createMany({ data: attendanceData })
   counts.attendance_record = attendanceData.length
+
+  // ─── Admin User (idempotent) ───
+  const existingAdmin = await prisma.user.findUnique({ where: { email: 'admin@rockdrill.com' } })
+  if (!existingAdmin) {
+    const hashedPassword = await bcrypt.hash('admin123', 10)
+    await prisma.user.create({
+      data: {
+        email: 'admin@rockdrill.com',
+        password: hashedPassword,
+        name: '系统管理员',
+        role: 'admin',
+        active: true,
+      },
+    })
+    console.log('  Created admin user: admin@rockdrill.com')
+  }
 
   // ─── Summary ───
   console.log('\n✅ 种子数据创建完成！')

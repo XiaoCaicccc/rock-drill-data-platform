@@ -8,7 +8,28 @@ datasource db {
 }
 
 // ============================================================
-//  ① equipment — 设备/机头档案
+// ⓪ user — 用户
+// ============================================================
+
+model user {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  password   String
+  name       String
+  role       String   @default("user")
+  active     Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  inspection_records inspection_record[]
+  analysis_reports   analysis_report[]
+  tasks              task[]
+
+  @@map("user")
+}
+
+// ============================================================
+// ① equipment — 设备/机头档案
 // ============================================================
 
 model equipment {
@@ -31,7 +52,7 @@ model equipment {
 }
 
 // ============================================================
-//  ② part_category — 零件类别
+// ② part_category — 零件类别
 // ============================================================
 
 model part_category {
@@ -48,7 +69,7 @@ model part_category {
 }
 
 // ============================================================
-//  ③ part — 零件档案
+// ③ part — 零件档案
 // ============================================================
 
 model part {
@@ -73,7 +94,7 @@ model part {
 }
 
 // ============================================================
-//  ④ parameter_template — 检测参数模板
+// ④ parameter_template — 检测参数模板
 // ============================================================
 
 model parameter_template {
@@ -89,7 +110,7 @@ model parameter_template {
 }
 
 // ============================================================
-//  ⑤ parameter_item — 参数项定义
+// ⑤ parameter_item — 参数项定义
 // ============================================================
 
 model parameter_item {
@@ -113,7 +134,7 @@ model parameter_item {
 }
 
 // ============================================================
-//  ⑥ inspection_record — 检测记录头
+// ⑥ inspection_record — 检测记录头
 // ============================================================
 
 model inspection_record {
@@ -125,17 +146,19 @@ model inspection_record {
   inspection_date DateTime
   overall_result  String    @default("待检")
   remark          String?
+  user_id         String?
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
   equipment  equipment?             @relation(fields: [equipment_id], references: [id])
+  user       user?                  @relation(fields: [user_id], references: [id])
   data_items inspection_data_item[]
 
   @@map("inspection_record")
 }
 
 // ============================================================
-//  ⑦ inspection_data_item — 检测数据明细
+// ⑦ inspection_data_item — 检测数据明细
 // ============================================================
 
 model inspection_data_item {
@@ -159,7 +182,7 @@ model inspection_data_item {
 }
 
 // ============================================================
-//  ⑧ analysis_report — 分析报告
+// ⑧ analysis_report — 分析报告
 // ============================================================
 
 model analysis_report {
@@ -172,14 +195,17 @@ model analysis_report {
   conclusion  String?
   author      String
   status      String   @default("草稿")
+  user_id     String?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
+
+  user user? @relation(fields: [user_id], references: [id])
 
   @@map("analysis_report")
 }
 
 // ============================================================
-//  ⑨ task — 任务
+// ⑨ task — 任务
 // ============================================================
 
 model task {
@@ -191,14 +217,17 @@ model task {
   assignee    String?
   due_date    DateTime?
   task_type   String    @default("常规")
+  user_id     String?
   created_at  DateTime  @default(now())
   updated_at  DateTime  @updatedAt
+
+  user user? @relation(fields: [user_id], references: [id])
 
   @@map("task")
 }
 
 // ============================================================
-//  ⑩ meeting — 会议
+// ⑩ meeting — 会议
 // ============================================================
 
 model meeting {
@@ -211,7 +240,7 @@ model meeting {
   minutes_content String?
   status          String   @default("待召开")
   created_at      DateTime @default(now())
-  updated_at      DateTime  @updatedAt
+  updated_at      DateTime @updatedAt
 
   resolutions meeting_resolution[]
 
@@ -219,7 +248,7 @@ model meeting {
 }
 
 // ============================================================
-//  ⑪ meeting_resolution — 会议决议
+// ⑪ meeting_resolution — 会议决议
 // ============================================================
 
 model meeting_resolution {
@@ -236,7 +265,7 @@ model meeting_resolution {
 }
 
 // ============================================================
-//  ⑫ document — 文件归档
+// ⑫ document — 文件归档
 // ============================================================
 
 model document {
@@ -252,7 +281,7 @@ model document {
 }
 
 // ============================================================
-//  ⑬ attendance_record — 考勤记录
+// ⑬ attendance_record — 考勤记录
 // ============================================================
 
 model attendance_record {

@@ -8,6 +8,7 @@ import {
   ScatterChart,
   FileBarChart,
   Briefcase,
+  Shield,
   type LucideIcon,
 } from 'lucide-react'
 import type { ViewType } from '@/store'
@@ -21,6 +22,8 @@ export interface NavItem {
   icon: LucideIcon
   /** 分组标题，用于视觉分组（null 表示不分组） */
   group: string | null
+  /** 是否仅管理员可见 */
+  adminOnly?: boolean
 }
 
 /**
@@ -28,14 +31,14 @@ export interface NavItem {
  * group 不为 null 时，该项前会插入分组标题和分隔线
  */
 export const NAV_ITEMS: NavItem[] = [
-  // ——— 数据总览 ———
+  // --- 数据总览 ---
   {
     key: 'dashboard',
     label: '数据总览',
     icon: LayoutDashboard,
     group: null,
   },
-  // ——— 档案管理 ———
+  // --- 档案管理 ---
   {
     key: 'equipment',
     label: '设备档案',
@@ -48,7 +51,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Puzzle,
     group: null,
   },
-  // ——— 检测管理 ———
+  // --- 检测管理 ---
   {
     key: 'templates',
     label: '检测参数模板',
@@ -67,7 +70,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: ScrollText,
     group: null,
   },
-  // ——— 分析与报告 ———
+  // --- 分析与报告 ---
   {
     key: 'analysis',
     label: '配合参数分析',
@@ -80,12 +83,20 @@ export const NAV_ITEMS: NavItem[] = [
     icon: FileBarChart,
     group: null,
   },
-  // ——— 部门工作台 ———
+  // --- 部门工作台 ---
   {
     key: 'workspace',
     label: '部门工作台',
     icon: Briefcase,
     group: '部门助理',
+  },
+  // --- 系统管理（仅管理员） ---
+  {
+    key: 'user-management',
+    label: '用户管理',
+    icon: Shield,
+    group: '系统管理',
+    adminOnly: true,
   },
 ]
 

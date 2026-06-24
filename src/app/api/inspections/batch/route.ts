@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 
 // ============================================================
@@ -14,6 +15,9 @@ interface BatchItem {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth()
+    const userId = (session?.user as { id?: string })?.id
+
     const body = await request.json()
     const { record, items } = body as {
       record: {
@@ -151,6 +155,7 @@ export async function POST(request: NextRequest) {
         inspection_date: new Date(record.inspection_date),
         overall_result,
         remark: record.remark?.trim() || null,
+        user_id: userId,
         data_items: {
           createMany: {
             data: processedItems,

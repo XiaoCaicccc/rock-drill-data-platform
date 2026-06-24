@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-/** MVP 全部9个模块视图 */
+/** MVP 全部模块视图 */
 export type ViewType =
   | 'dashboard'
   | 'equipment'
@@ -11,6 +11,7 @@ export type ViewType =
   | 'analysis'
   | 'reports'
   | 'workspace'
+  | 'user-management'
 
 interface AppState {
   /** 当前激活的视图 */
