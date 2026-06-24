@@ -1,0 +1,842 @@
+     1→import { PrismaClient } from '@prisma/client'
+     2→
+     3→
+     4→// ============================================================
+     5→//  Types
+     6→// ============================================================
+     7→
+     8→export interface SeedCounts {
+     9→  part_category: number
+    10→  equipment: number
+    11→  parameter_template: number
+    12→  parameter_item: number
+    13→  part: number
+    14→  inspection_record: number
+    15→  inspection_data_item: number
+    16→  analysis_report: number
+    17→  task: number
+    18→  meeting: number
+    19→  meeting_resolution: number
+    20→  document: number
+    21→  attendance_record: number
+    22→}
+    23→
+    24→// Compact numeric param: { n: name, u: unit, s: [stdMin, stdMax], o: [optMin, optMax] }
+    25→// Compact text param:   { n: name, u: unit, t: 'opt1,opt2,opt3' }
+    26→type NP = { n: string; u: string; s: [number, number]; o: [number, number] }
+    27→type TP = { n: string; u: string; t: string }
+    28→
+    29→// ============================================================
+    30→//  Helpers
+    31→// ============================================================
+    32→
+    33→function normalRandom(mean: number, stdDev: number): number {
+    34→  let u1 = Math.random()
+    35→  let u2 = Math.random()
+    36→  while (u1 === 0) u1 = Math.random()
+    37→  return mean + Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * stdDev
+    38→}
+    39→
+    40→function isNP(d: NP | TP): d is NP {
+    41→  return 's' in d
+    42→}
+    43→
+    44→function pad3(i: number): string {
+    45→  return String(i + 1).padStart(3, '0')
+    46→}
+    47→
+    48→// ============================================================
+    49→//  1. Categories (6)
+    50→// ============================================================
+    51→
+    52→const CATEGORIES = [
+    53→  { name: '钻头', code: 'ZT', description: '凿岩机钻头总成，含球齿形、十字形等类型' },
+    54→  { name: '活塞', code: 'HS', description: '冲击活塞，将冲击能传递至钻头' },
+    55→  { name: '气缸', code: 'QG', description: '气缸体，为活塞提供冲击行程空间' },
+    56→  { name: '阀组', code: 'FZ', description: '配气阀组，控制气路换向' },
+    57→  { name: '轴承', code: 'ZC', description: '主轴承及传动轴承组件' },
+    58→  { name: '密封件', code: 'MF', description: 'O型圈、油封、气封等密封组件' },
+    59→]
+    60→
+    61→// ============================================================
+    62→//  2. Equipment (3)
+    63→// ============================================================
+    64→
+    65→const EQUIPMENT = [
+    66→  {
+    67→    machine_no: 'ZYT-2024-001',
+    68→    model: 'COP1838ME',
+    69→    manufacturer: '阿特拉斯·科普柯',
+    70→    production_date: '2023-06-15',
+    71→    status: '在用',
+    72→    current_location: '1号采场-水平-东巷道',
+    73→    total_working_hours: 4580.5,
+    74→    remark: '主力设备，运行状态良好',
+    75→  },
+    76→  {
+    77→    machine_no: 'ZYT-2024-002',
+    78→    model: 'DD422i',
+    79→    manufacturer: '山特维克',
+    80→    production_date: '2022-11-20',
+    81→    status: '维修中',
+    82→    current_location: '维修车间-A区',
+    83→    total_working_hours: 6230.0,
+    84→    remark: '累计运行超6000小时，当前大修中',
+    85→  },
+    86→  {
+    87→    machine_no: 'ZYT-2024-003',
+    88→    model: 'Boomer S2',
+    89→    manufacturer: '阿特拉斯·科普柯',
+    90→    production_date: '2024-01-10',
+    91→    status: '库存',
+    92→    current_location: '设备库房-A区-3号架',
+    93→    total_working_hours: 120.0,
+    94→    remark: '新采购备用机，尚未投入生产',
+    95→  },
+    96→]
+    97→
+    98→// ============================================================
+    99→//  3. Parts (12) — 2 per category, 6 per active equipment
+   100→// ============================================================
+   101→
+   102→// [code, name, catCode, eqIndex (0/1/2), spec, material, supplier, workHours]
+   103→type PartDef = [string, string, string, number, string, string, string, number]
+   104→
+   105→const PARTS_DEF: PartDef[] = [
+   106→  ['ZT-001', 'φ90球齿钻头',   'ZT', 0, 'D90×L400',        '硬质合金YG11C/40Cr',  '株洲硬质合金', 1520.5],
+   107→  ['ZT-002', 'φ102十字钻头',  'ZT', 1, 'D102×L420',       '硬质合金YG8/45Cr',    '自贡硬质合金', 2180.3],
+   108→  ['HS-001', 'φ75冲击活塞A',  'HS', 0, 'D75×L360',        '20CrMnTi渗碳淬火',    '洛阳轴承研究所', 890.2],
+   109→  ['HS-002', 'φ85冲击活塞B',  'HS', 1, 'D85×L380',        '20CrMnTi渗碳淬火',    '洛阳轴承研究所', 2340.8],
+   110→  ['QG-001', 'φ90气缸体A',    'QG', 0, 'ID90×L460',       '42CrMo调质',          '中船重工',       1520.5],
+   111→  ['QG-002', 'φ102气缸体B',   'QG', 1, 'ID102×L480',      '42CrMo调质',          '中船重工',       2180.3],
+   112→  ['FZ-001', 'COP配气阀组',   'FZ', 0, 'D52×L130',        'GCr15淬火回火',       '洛阳轴承研究所', 890.2],
+   113→  ['FZ-002', 'DD配气阀组',    'FZ', 1, 'D55×L135',        'GCr15淬火回火',       '洛阳轴承研究所', 2340.8],
+   114→  ['ZC-001', 'SKF主轴承A',    'ZC', 0, 'ID45×OD86×W26',  'GCr15',               'SKF中国',        1520.5],
+   115→  ['ZC-002', 'NSK主轴承B',    'ZC', 1, 'ID45×OD86×W26',  'GCr15',               'NSK中国',        2180.3],
+   116→  ['MF-001', '活塞密封组件',  'MF', 0, 'NBR O-RING D75',  '丁腈橡胶NBR',         '中鼎密封',       1520.5],
+   117→  ['MF-002', '气缸密封组件',  'MF', 1, 'PU SEAL D102',    '聚氨酯PU',            '中鼎密封',       2180.3],
+   118→]
+   119→
+   120→// ============================================================
+   121→//  4. Parameter Definitions (6 categories × 40 items = 240)
+   122→// ============================================================
+   123→
+   124→const CATEGORY_PARAMS: Record<string, (NP | TP)[]> = {
+   125→  // ────────────────── ZT 钻头 (38 numeric + 2 text) ──────────────────
+   126→  ZT: [
+   127→    { n: '外径',       u: 'mm',      s: [89, 91],     o: [89.5, 90.5] },
+   128→    { n: '内径',       u: 'mm',      s: [20, 22],     o: [20.5, 21.5] },
+   129→    { n: '总长度',     u: 'mm',      s: [380, 400],   o: [385, 395] },
+   130→    { n: '钢体长度',   u: 'mm',      s: [280, 300],   o: [285, 295] },
+   131→    { n: '头部直径',   u: 'mm',      s: [88, 92],     o: [89, 91] },
+   132→    { n: '合金齿高度', u: 'mm',      s: [5.0, 6.0],   o: [5.3, 5.7] },
+   133→    { n: '齿间距',     u: 'mm',      s: [12.0, 13.0], o: [12.3, 12.7] },
+   134→    { n: '排粉槽深度', u: 'mm',      s: [3.0, 4.0],   o: [3.3, 3.7] },
+   135→    { n: '排粉槽宽度', u: 'mm',      s: [6.0, 7.0],   o: [6.3, 6.7] },
+   136→    { n: '冲洗孔径',   u: 'mm',      s: [8, 12],      o: [9, 11] },
+   137→    { n: '冲洗孔数',   u: '个',      s: [3, 5],       o: [3, 4] },
+   138→    { n: '螺纹外径',   u: 'mm',      s: [32, 34],     o: [32.5, 33.5] },
+   139→    { n: '螺纹内径',   u: 'mm',      s: [28, 30],     o: [28.5, 29.5] },
+   140→    { n: '螺纹长度',   u: 'mm',      s: [80, 100],    o: [85, 95] },
+   141→    { n: '硬度HRC-齿部',  u: 'HRC', s: [38, 45],     o: [40, 43] },
+   142→    { n: '硬度HRC-体部',  u: 'HRC', s: [35, 42],     o: [37, 40] },
+   143→    { n: '抗拉强度',   u: 'MPa',     s: [900, 1100],  o: [950, 1050] },
+   144→    { n: '冲击韧性',   u: 'J/cm²',   s: [15, 25],     o: [18, 22] },
+   145→    { n: '碳化钨含量', u: '%',       s: [85, 92],     o: [87, 90] },
+   146→    { n: '钴含量',     u: '%',       s: [8, 15],      o: [10, 12] },
+   147→    { n: '密度',       u: 'g/cm³',   s: [14.0, 15.5], o: [14.5, 15.0] },
+   148→    { n: '弹性模量',   u: 'GPa',     s: [550, 650],   o: [580, 620] },
+   149→    { n: '热导率',     u: 'W/m·K',   s: [80, 120],    o: [90, 110] },
+   150→    { n: '孔隙率',     u: '%',       s: [0, 0.2],     o: [0, 0.1] },
+   151→    { n: '残余应力',   u: 'MPa',     s: [0, 200],     o: [0, 100] },
+   152→    { n: '晶粒度',     u: 'μm',      s: [0.5, 2.0],   o: [0.8, 1.5] },
+   153→    { n: '线膨胀系数', u: '10⁻⁶/K',  s: [5, 7],       o: [5.5, 6.5] },
+   154→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   155→    { n: '内孔粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   156→    { n: '端面粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   157→    { n: '圆度',       u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   158→    { n: '圆柱度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   159→    { n: '同轴度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   160→    { n: '端面跳动',   u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   161→    { n: '径向跳动',   u: 'mm',      s: [0, 0.08],    o: [0, 0.03] },
+   162→    { n: '直线度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   163→    { n: '位置度',     u: 'mm',      s: [0, 0.15],    o: [0, 0.08] },
+   164→    { n: '全跳动',     u: 'mm',      s: [0, 0.12],    o: [0, 0.06] },
+   165→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   166→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   167→  ],
+   168→
+   169→  // ────────────────── HS 活塞 (38 numeric + 2 text) ──────────────────
+   170→  HS: [
+   171→    { n: '外径',       u: 'mm',      s: [75, 76],     o: [75.2, 75.8] },
+   172→    { n: '内径',       u: 'mm',      s: [18, 20],     o: [18.5, 19.5] },
+   173→    { n: '总长度',     u: 'mm',      s: [350, 370],   o: [355, 365] },
+   174→    { n: '大端直径',   u: 'mm',      s: [74, 75],     o: [74.2, 74.8] },
+   175→    { n: '小端直径',   u: 'mm',      s: [45, 46],     o: [45.3, 45.7] },
+   176→    { n: '大端长度',   u: 'mm',      s: [120, 130],   o: [123, 127] },
+   177→    { n: '小端长度',   u: 'mm',      s: [80, 90],     o: [83, 87] },
+   178→    { n: '密封槽宽',   u: 'mm',      s: [4.0, 5.0],   o: [4.3, 4.7] },
+   179→    { n: '密封槽深',   u: 'mm',      s: [2.5, 3.5],   o: [2.8, 3.2] },
+   180→    { n: '密封槽数',   u: '个',      s: [3, 5],       o: [4, 4] },
+   181→    { n: '硬度HRC',    u: 'HRC',     s: [40, 48],     o: [42, 46] },
+   182→    { n: '硬度均匀性', u: 'HRC',     s: [0, 3],       o: [0, 1.5] },
+   183→    { n: '抗拉强度',   u: 'MPa',     s: [800, 1000],  o: [850, 950] },
+   184→    { n: '屈服强度',   u: 'MPa',     s: [600, 800],   o: [650, 750] },
+   185→    { n: '冲击韧性',   u: 'J/cm²',   s: [20, 35],     o: [25, 30] },
+   186→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   187→    { n: '圆度',       u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   188→    { n: '圆柱度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   189→    { n: '同轴度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   190→    { n: '直线度',     u: 'mm',      s: [0, 0.06],    o: [0, 0.03] },
+   191→    { n: '径向跳动',   u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   192→    { n: '端面跳动',   u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   193→    { n: '垂直度',     u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   194→    { n: '位置度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   195→    { n: '对称度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   196→    { n: '轮廓度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   197→    { n: '全跳动',     u: 'mm',      s: [0, 0.06],    o: [0, 0.03] },
+   198→    { n: '倾斜度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   199→    { n: '密封槽圆度', u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   200→    { n: '密封槽粗糙度Ra', u: 'μm',  s: [0, 1.6],     o: [0, 0.8] },
+   201→    { n: '表面处理层厚', u: 'μm',     s: [10, 30],     o: [15, 25] },
+   202→    { n: '残余应力',   u: 'MPa',     s: [0, 150],     o: [0, 80] },
+   203→    { n: '疲劳寿命',   u: '万次',    s: [50, 100],    o: [65, 90] },
+   204→    { n: '密度',       u: 'g/cm³',   s: [7.8, 8.0],   o: [7.85, 7.95] },
+   205→    { n: '弹性模量',   u: 'GPa',     s: [200, 220],   o: [205, 215] },
+   206→    { n: '热膨胀系数', u: '10⁻⁶/K',  s: [11, 13],     o: [11.5, 12.5] },
+   207→    { n: '导热系数',   u: 'W/m·K',   s: [40, 55],     o: [45, 50] },
+   208→    { n: '质量',       u: 'kg',      s: [3.5, 4.0],   o: [3.6, 3.9] },
+   209→    { n: '重心偏移',   u: 'mm',      s: [0, 0.5],     o: [0, 0.25] },
+   210→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   211→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   212→  ],
+   213→
+   214→  // ────────────────── QG 气缸 (38 numeric + 2 text) ──────────────────
+   215→  QG: [
+   216→    { n: '内径',       u: 'mm',      s: [90, 91],     o: [90.2, 90.8] },
+   217→    { n: '外径',       u: 'mm',      s: [110, 112],   o: [110.5, 111.5] },
+   218→    { n: '总长度',     u: 'mm',      s: [450, 470],   o: [455, 465] },
+   219→    { n: '缸筒壁厚',   u: 'mm',      s: [9, 11],      o: [9.5, 10.5] },
+   220→    { n: '法兰外径',   u: 'mm',      s: [130, 135],   o: [131, 134] },
+   221→    { n: '法兰厚度',   u: 'mm',      s: [15, 20],     o: [16, 19] },
+   222→    { n: '进气口直径', u: 'mm',      s: [25, 28],     o: [25.5, 27.5] },
+   223→    { n: '排气口直径', u: 'mm',      s: [25, 28],     o: [25.5, 27.5] },
+   224→    { n: '螺栓孔径',   u: 'mm',      s: [12, 14],     o: [12.5, 13.5] },
+   225→    { n: '螺栓孔数',   u: '个',      s: [6, 8],       o: [6, 7] },
+   226→    { n: '硬度HRC',    u: 'HRC',     s: [28, 35],     o: [30, 33] },
+   227→    { n: '抗拉强度',   u: 'MPa',     s: [600, 800],   o: [650, 750] },
+   228→    { n: '屈服强度',   u: 'MPa',     s: [400, 600],   o: [450, 550] },
+   229→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   230→    { n: '圆度',       u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   231→    { n: '圆柱度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   232→    { n: '同轴度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   233→    { n: '直线度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   234→    { n: '径向跳动',   u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   235→    { n: '端面跳动',   u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   236→    { n: '垂直度',     u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   237→    { n: '位置度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   238→    { n: '对称度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   239→    { n: '轮廓度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   240→    { n: '全跳动',     u: 'mm',      s: [0, 0.06],    o: [0, 0.03] },
+   241→    { n: '内壁粗糙度Ra', u: 'μm',    s: [0, 1.6],     o: [0, 0.8] },
+   242→    { n: '螺栓孔位置度', u: 'mm',    s: [0, 0.2],     o: [0, 0.1] },
+   243→    { n: '法兰端面平面度', u: 'mm',  s: [0, 0.03],    o: [0, 0.015] },
+   244→    { n: '表面处理层厚', u: 'μm',     s: [20, 50],     o: [25, 45] },
+   245→    { n: '残余应力',   u: 'MPa',     s: [0, 100],     o: [0, 50] },
+   246→    { n: '气密性',     u: 'MPa',     s: [0.8, 1.2],   o: [0.9, 1.1] },
+   247→    { n: '水压试验',   u: 'MPa',     s: [1.5, 2.0],   o: [1.6, 1.9] },
+   248→    { n: '疲劳寿命',   u: '万次',    s: [100, 200],   o: [130, 180] },
+   249→    { n: '密度',       u: 'g/cm³',   s: [7.2, 7.5],   o: [7.3, 7.4] },
+   250→    { n: '弹性模量',   u: 'GPa',     s: [170, 190],   o: [175, 185] },
+   251→    { n: '热膨胀系数', u: '10⁻⁶/K',  s: [11, 13],     o: [11.5, 12.5] },
+   252→    { n: '导热系数',   u: 'W/m·K',   s: [45, 60],     o: [48, 55] },
+   253→    { n: '质量',       u: 'kg',      s: [18, 22],     o: [19, 21] },
+   254→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   255→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   256→  ],
+   257→
+   258→  // ────────────────── FZ 阀组 (38 numeric + 2 text) ──────────────────
+   259→  FZ: [
+   260→    { n: '阀体外径',   u: 'mm',      s: [50, 52],     o: [50.3, 51.7] },
+   261→    { n: '阀体内径',   u: 'mm',      s: [35, 37],     o: [35.5, 36.5] },
+   262→    { n: '阀芯直径',   u: 'mm',      s: [34, 36],     o: [34.3, 35.7] },
+   263→    { n: '阀座直径',   u: 'mm',      s: [34, 36],     o: [34.3, 35.7] },
+   264→    { n: '阀芯长度',   u: 'mm',      s: [80, 90],     o: [82, 88] },
+   265→    { n: '阀体长度',   u: 'mm',      s: [120, 130],   o: [122, 128] },
+   266→    { n: '进气口直径', u: 'mm',      s: [15, 18],     o: [15.5, 17.5] },
+   267→    { n: '排气口直径', u: 'mm',      s: [15, 18],     o: [15.5, 17.5] },
+   268→    { n: '控制口直径', u: 'mm',      s: [8, 12],      o: [9, 11] },
+   269→    { n: '密封槽宽',   u: 'mm',      s: [3.0, 4.0],   o: [3.3, 3.7] },
+   270→    { n: '密封槽深',   u: 'mm',      s: [1.5, 2.5],   o: [1.8, 2.2] },
+   271→    { n: '硬度HRC',    u: 'HRC',     s: [45, 52],     o: [47, 50] },
+   272→    { n: '硬度均匀性', u: 'HRC',     s: [0, 3],       o: [0, 1.5] },
+   273→    { n: '抗拉强度',   u: 'MPa',     s: [700, 900],   o: [750, 850] },
+   274→    { n: '屈服强度',   u: 'MPa',     s: [500, 700],   o: [550, 650] },
+   275→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 3.2],     o: [0, 1.6] },
+   276→    { n: '圆度',       u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   277→    { n: '圆柱度',     u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   278→    { n: '同轴度',     u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   279→    { n: '直线度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   280→    { n: '径向跳动',   u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   281→    { n: '端面跳动',   u: 'mm',      s: [0, 0.03],    o: [0, 0.015] },
+   282→    { n: '垂直度',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   283→    { n: '位置度',     u: 'mm',      s: [0, 0.08],    o: [0, 0.04] },
+   284→    { n: '对称度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   285→    { n: '轮廓度',     u: 'mm',      s: [0, 0.04],    o: [0, 0.02] },
+   286→    { n: '全跳动',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   287→    { n: '阀芯配合间隙', u: 'mm',    s: [0.01, 0.05], o: [0.02, 0.04] },
+   288→    { n: '密封面粗糙度Ra', u: 'μm',  s: [0, 0.8],     o: [0, 0.4] },
+   289→    { n: '密封面平面度', u: 'mm',    s: [0, 0.01],    o: [0, 0.005] },
+   290→    { n: '表面处理层厚', u: 'μm',     s: [5, 15],      o: [8, 12] },
+   291→    { n: '残余应力',   u: 'MPa',     s: [0, 120],     o: [0, 60] },
+   292→    { n: '响应时间',   u: 'ms',      s: [5, 15],      o: [7, 12] },
+   293→    { n: '换向次数',   u: '万次',    s: [100, 300],   o: [150, 250] },
+   294→    { n: '密封性',     u: 'MPa',     s: [1.0, 1.5],   o: [1.1, 1.4] },
+   295→    { n: '疲劳寿命',   u: '万次',    s: [80, 200],    o: [100, 170] },
+   296→    { n: '密度',       u: 'g/cm³',   s: [7.7, 7.9],   o: [7.75, 7.85] },
+   297→    { n: '弹性模量',   u: 'GPa',     s: [190, 210],   o: [195, 205] },
+   298→    { n: '质量',       u: 'kg',      s: [2.0, 2.8],   o: [2.2, 2.6] },
+   299→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   300→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   301→  ],
+   302→
+   303→  // ────────────────── ZC 轴承 (38 numeric + 2 text) ──────────────────
+   304→  ZC: [
+   305→    { n: '内径',       u: 'mm',      s: [45, 46],     o: [45.2, 45.8] },
+   306→    { n: '外径',       u: 'mm',      s: [85, 86],     o: [85.2, 85.8] },
+   307→    { n: '宽度',       u: 'mm',      s: [25, 26],     o: [25.2, 25.8] },
+   308→    { n: '内圈宽度',   u: 'mm',      s: [24, 25],     o: [24.3, 24.7] },
+   309→    { n: '外圈宽度',   u: 'mm',      s: [24, 25],     o: [24.3, 24.7] },
+   310→    { n: '滚动体直径', u: 'mm',      s: [8, 9],       o: [8.2, 8.8] },
+   311→    { n: '滚动体数量', u: '个',      s: [8, 12],      o: [9, 11] },
+   312→    { n: '保持架内径', u: 'mm',      s: [50, 52],     o: [50.5, 51.5] },
+   313→    { n: '保持架外径', u: 'mm',      s: [78, 80],     o: [78.5, 79.5] },
+   314→    { n: '滚道曲率半径', u: 'mm',    s: [4.1, 4.5],   o: [4.2, 4.4] },
+   315→    { n: '硬度HRC',    u: 'HRC',     s: [58, 65],     o: [60, 63] },
+   316→    { n: '硬度均匀性', u: 'HRC',     s: [0, 2],       o: [0, 1] },
+   317→    { n: '抗拉强度',   u: 'MPa',     s: [1200, 1500], o: [1300, 1400] },
+   318→    { n: '屈服强度',   u: 'MPa',     s: [1000, 1300], o: [1100, 1200] },
+   319→    { n: '冲击韧性',   u: 'J/cm²',   s: [10, 20],     o: [13, 17] },
+   320→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 1.6],     o: [0, 0.8] },
+   321→    { n: '圆度',       u: 'mm',      s: [0, 0.01],    o: [0, 0.005] },
+   322→    { n: '圆柱度',     u: 'mm',      s: [0, 0.015],   o: [0, 0.008] },
+   323→    { n: '同轴度',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   324→    { n: '直线度',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   325→    { n: '径向跳动',   u: 'mm',      s: [0, 0.015],   o: [0, 0.008] },
+   326→    { n: '端面跳动',   u: 'mm',      s: [0, 0.01],    o: [0, 0.005] },
+   327→    { n: '垂直度',     u: 'mm',      s: [0, 0.01],    o: [0, 0.005] },
+   328→    { n: '位置度',     u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   329→    { n: '对称度',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   330→    { n: '轮廓度',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   331→    { n: '全跳动',     u: 'mm',      s: [0, 0.02],    o: [0, 0.01] },
+   332→    { n: '径向游隙',   u: 'mm',      s: [0.01, 0.05], o: [0.015, 0.04] },
+   333→    { n: '轴向游隙',   u: 'mm',      s: [0.02, 0.08], o: [0.03, 0.06] },
+   334→    { n: '滚道粗糙度Ra', u: 'μm',    s: [0, 0.4],     o: [0, 0.2] },
+   335→    { n: '滚动体圆度', u: 'mm',      s: [0, 0.003],   o: [0, 0.002] },
+   336→    { n: '保持架间隙', u: 'mm',      s: [0.1, 0.3],   o: [0.15, 0.25] },
+   337→    { n: '表面处理层厚', u: 'μm',     s: [1, 5],       o: [2, 4] },
+   338→    { n: '残余应力',   u: 'MPa',     s: [0, 100],     o: [0, 50] },
+   339→    { n: '额定动载荷', u: 'kN',      s: [80, 120],    o: [90, 110] },
+   340→    { n: '额定静载荷', u: 'kN',      s: [60, 100],    o: [70, 90] },
+   341→    { n: '极限转速',   u: 'r/min',   s: [3000, 5000], o: [3500, 4500] },
+   342→    { n: '疲劳寿命',   u: '万转',    s: [500, 1000],  o: [650, 850] },
+   343→    { n: '密度',       u: 'g/cm³',   s: [7.8, 8.1],   o: [7.85, 8.05] },
+   344→    { n: '质量',       u: 'kg',      s: [1.0, 1.5],   o: [1.1, 1.4] },
+   345→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   346→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   347→  ],
+   348→
+   349→  // ────────────────── MF 密封件 (38 numeric + 2 text) ──────────────────
+   350→  MF: [
+   351→    { n: '内径',       u: 'mm',      s: [45, 46],     o: [45.3, 45.7] },
+   352→    { n: '外径',       u: 'mm',      s: [55, 56],     o: [55.2, 55.8] },
+   353→    { n: '截面直径',   u: 'mm',      s: [4.5, 5.5],   o: [4.8, 5.2] },
+   354→    { n: '线径',       u: 'mm',      s: [2.0, 3.0],   o: [2.3, 2.7] },
+   355→    { n: '自由高度',   u: 'mm',      s: [8, 12],      o: [9, 11] },
+   356→    { n: '压缩量',     u: '%',       s: [15, 30],     o: [18, 25] },
+   357→    { n: '拉伸强度',   u: 'MPa',     s: [10, 25],     o: [14, 22] },
+   358→    { n: '扯断伸长率', u: '%',       s: [200, 500],   o: [280, 420] },
+   359→    { n: '硬度ShoreA', u: 'ShoreA',  s: [65, 85],     o: [70, 80] },
+   360→    { n: '硬度均匀性', u: 'ShoreA',  s: [0, 5],       o: [0, 3] },
+   361→    { n: '永久变形',   u: '%',       s: [5, 20],      o: [8, 15] },
+   362→    { n: '撕裂强度',   u: 'kN/m',    s: [15, 40],     o: [20, 35] },
+   363→    { n: '回弹率',     u: '%',       s: [30, 60],     o: [38, 52] },
+   364→    { n: '耐磨性',     u: 'mm³',     s: [50, 200],    o: [80, 150] },
+   365→    { n: '表面粗糙度Ra', u: 'μm',    s: [0, 6.3],     o: [0, 3.2] },
+   366→    { n: '圆度',       u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   367→    { n: '圆柱度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   368→    { n: '同轴度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   369→    { n: '直线度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   370→    { n: '径向跳动',   u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   371→    { n: '端面跳动',   u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   372→    { n: '垂直度',     u: 'mm',      s: [0, 0.08],    o: [0, 0.04] },
+   373→    { n: '位置度',     u: 'mm',      s: [0, 0.15],    o: [0, 0.08] },
+   374→    { n: '对称度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   375→    { n: '轮廓度',     u: 'mm',      s: [0, 0.1],     o: [0, 0.05] },
+   376→    { n: '全跳动',     u: 'mm',      s: [0, 0.12],    o: [0, 0.06] },
+   377→    { n: '密封面粗糙度Ra', u: 'μm',  s: [0, 3.2],     o: [0, 1.6] },
+   378→    { n: '密封面平面度', u: 'mm',    s: [0, 0.05],    o: [0, 0.025] },
+   379→    { n: '截面形状偏差', u: 'mm',    s: [0, 0.1],     o: [0, 0.05] },
+   380→    { n: '厚度均匀性', u: 'mm',      s: [0, 0.05],    o: [0, 0.025] },
+   381→    { n: '表面缺陷深度', u: 'mm',    s: [0, 0.1],     o: [0, 0.05] },
+   382→    { n: '残余应力',   u: 'MPa',     s: [0, 5],       o: [0, 2] },
+   383→    { n: '压缩永久变形', u: '%',     s: [5, 20],      o: [8, 15] },
+   384→    { n: '热空气老化硬度变化', u: 'ShoreA', s: [0, 10], o: [0, 5] },
+   385→    { n: '耐液体性质量变化', u: '%',  s: [0, 15],      o: [0, 8] },
+   386→    { n: '低温脆性温度', u: '℃',     s: [-60, -30],   o: [-50, -35] },
+   387→    { n: '气密性',     u: 'MPa',     s: [0.5, 1.5],   o: [0.8, 1.2] },
+   388→    { n: '疲劳寿命',   u: '万次',    s: [50, 200],    o: [80, 160] },
+   389→    { n: '密度',       u: 'g/cm³',   s: [1.1, 1.5],   o: [1.2, 1.4] },
+   390→    { n: '弹性模量',   u: 'MPa',     s: [5, 15],      o: [7, 12] },
+   391→    { n: '质量',       u: 'kg',      s: [0.01, 0.05], o: [0.015, 0.04] },
+   392→    { n: '探伤等级',   u: '-',       t: '合格,不合格,待复检' },
+   393→    { n: '外观检查',   u: '-',       t: '合格,不合格,待修' },
+   394→  ],
+   395→}
+   396→
+   397→// ============================================================
+   398→//  5-9. Reports, Tasks, Meetings, Documents, Attendance
+   399→// ============================================================
+   400→
+   401→const REPORTS = [
+   402→  {
+   403→    report_no: 'RPT-2025-001',
+   404→    title: '2025年1月凿岩机零件检测月度分析报告',
+   405→    type: '月度报告',
+   406→    period: '2025年1月',
+   407→    summary: '本月共完成20次检测，涵盖钻头、活塞、气缸等6类零件共12个件号，检测参数480项/次。整体合格率91.2%，较上月提升1.3个百分点，密封件类合格率偏低需重点关注。',
+   408→    conclusion: '建议加强密封件入厂检验，增备2套密封件库存；钻头磨损趋势平稳，可维持当前更换周期。',
+   409→    author: '张工',
+   410→    status: '已发布',
+   411→  },
+   412→  {
+   413→    report_no: 'RPT-2025-002',
+   414→    title: '2025年2月凿岩机零件检测月度分析报告',
+   415→    type: '月度报告',
+   416→    period: '2025年2月',
+   417→    summary: '本月完成20次检测，整体合格率93.5%，连续3个月呈上升趋势。阀组配合间隙项出现2次超标，已安排复检。活塞硬度均匀性稳定在良好区间。',
+   418→    conclusion: '阀组配合间隙波动与气源压力不稳有关，建议检修空压机；其余零件状态良好，维持当前检测频率。',
+   419→    author: '李工',
+   420→    status: '已发布',
+   421→  },
+   422→  {
+   423→    report_no: 'RPT-2025-003',
+   424→    title: '2025年Q1凿岩机配合参数季度分析报告',
+   425→    type: '季度报告',
+   426→    period: '2025年Q1',
+   427→    summary: '第一季度累计检测40次，生成检测数据9600条。6类零件中轴承和密封件合格率相对较低，分别为89.8%和88.5%。通过趋势分析发现活塞硬度随工作时长线性下降，建议建立寿命预测模型。',
+   428→    conclusion: 'Q1整体质量稳定，建议：(1)活塞建立硬度衰减曲线预测剩余寿命；(2)密封件提前更换周期由500h调整为450h；(3)轴承引入振动监测辅助判定。',
+   429→    author: '王工',
+   430→    status: '审核中',
+   431→  },
+   432→  {
+   433→    report_no: 'RPT-2025-004',
+   434→    title: 'COP1838ME凿岩机全生命周期分析报告',
+   435→    type: '全生命周期报告',
+   436→    period: '2022-2025',
+   437→    summary: 'ZYT-2024-001（COP1838ME）自2023年6月投入运行以来，累计工作4580.5小时。全生命周期内共更换钻头12次、活塞3次、密封组件8次。设备整体可用率达92.3%，MTBF（平均故障间隔时间）为680小时。',
+   438→    conclusion: '设备处于稳定运行期，各易损件更换周期已趋于规律。预计下一大修节点在累计8000小时（约2026年Q2），建议提前制定大修计划并储备关键备件。',
+   439→    author: '赵工',
+   440→    status: '草稿',
+   441→  },
+   442→]
+   443→
+   444→const TASKS = [
+   445→  { title: 'ZYT-001钻头磨损趋势分析', description: '收集近6个月钻头检测数据，分析齿高、外径等关键参数的磨损趋势，建立预测模型', priority: '高', status: '进行中', assignee: '张工', due_date: '2025-03-15', task_type: '专项' },
+   446→  { title: 'ZYT-002气缸内壁精度复检', description: '针对上月气缸内径偏差接近下限的情况，安排一次全面复检，包含所有形位公差参数', priority: '高', status: '待办', assignee: '李工', due_date: '2025-03-20', task_type: '专项' },
+   447→  { title: '新批次密封件入库全检', description: '中鼎密封新到货的NBR和PU材质密封件各20套，需按检测模板进行全检入库', priority: '中', status: '已完成', assignee: '王工', due_date: '2025-02-28', task_type: '常规' },
+   448→  { title: 'COP1838ME大修方案制定', description: '根据全生命周期分析报告结论，制定COP1838ME凿岩机的大修方案，含时间节点、备件清单、人员安排', priority: '高', status: '待办', assignee: '赵工', due_date: '2025-04-01', task_type: '专项' },
+   449→  { title: 'Q1检测数据质量审核', description: '审核Q1全部检测记录的完整性和准确性，重点检查异常值标记和合格判定逻辑', priority: '中', status: '进行中', assignee: '刘工', due_date: '2025-03-31', task_type: '常规' },
+   450→]
+   451→
+   452→const MEETINGS = [
+   453→  {
+   454→    title: '2025年1月质量分析会',
+   455→    meeting_date: '2025-01-28',
+   456→    location: '三楼会议室',
+   457→    organizer: '赵工',
+   458→    participants: '张工,李工,王工,赵工,刘工',
+   459→    minutes_content: '回顾1月检测数据，讨论密封件合格率偏低的原因及改进措施。决议加强入厂检验并增备库存。',
+   460→    status: '已完成',
+   461→  },
+   462→  {
+   463→    title: '设备维保协调会',
+   464→    meeting_date: '2025-02-15',
+   465→    location: '设备部办公室',
+   466→    organizer: '赵工',
+   467→    participants: '张工,李工,王工,设备主管',
+   468→    minutes_content: '协调ZYT-002大修计划时间节点，确认备件采购到货情况，安排维修期间的生产替代方案。',
+   469→    status: '已完成',
+   470→  },
+   471→  {
+   472→    title: '2025年Q1质量总结会',
+   473→    meeting_date: '2025-03-28',
+   474→    location: '三楼会议室',
+   475→    organizer: '王工',
+   476→    participants: '张工,李工,王工,赵工,刘工,车间主任',
+   477→    minutes_content: 'Q1质量总结待召开。',
+   478→    status: '待召开',
+   479→  },
+   480→]
+   481→
+   482→const RESOLUTIONS = [
+   483→  // Meeting 1 (index 0)
+   484→  { meeting_idx: 0, content: '加强钻头入厂检验频率，由每批抽检改为全检', responsible_person: '张工', due_date: '2025-02-15', status: '已完成' },
+   485→  { meeting_idx: 0, content: '建立活塞疲劳寿命数据库，跟踪记录每次检测结果', responsible_person: '李工', due_date: '2025-03-31', status: '进行中' },
+   486→  // Meeting 2 (index 1)
+   487→  { meeting_idx: 1, content: 'ZYT-002安排3月第二周进行大修', responsible_person: '李工', due_date: '2025-03-14', status: '待执行' },
+   488→  { meeting_idx: 1, content: '增备两套密封件库存，最低库存量调整为10套', responsible_person: '王工', due_date: '2025-03-01', status: '已完成' },
+   489→  // Meeting 3 (index 2)
+   490→  { meeting_idx: 2, content: 'Q1各零件合格率目标不低于92%', responsible_person: '张工', due_date: '2025-03-31', status: '待执行' },
+   491→  { meeting_idx: 2, content: '推进检测数据电子化录入，减少纸质记录', responsible_person: '刘工', due_date: '2025-06-30', status: '待执行' },
+   492→]
+   493→
+   494→const DOCUMENTS = [
+   495→  { title: '2025年1月检测月报', category: '月报', file_path: '/docs/reports/2025-01-monthly.pdf', related_report_no: 'RPT-2025-001' },
+   496→  { title: '2025年2月检测月报', category: '月报', file_path: '/docs/reports/2025-02-monthly.pdf', related_report_no: 'RPT-2025-002' },
+   497→  { title: 'COP1838ME维修手册(第三版)', category: '技术文档', file_path: '/docs/manuals/COP1838ME-manual-v3.pdf', related_report_no: null },
+   498→  { title: '凿岩机零件检测操作规程', category: '操作规程', file_path: '/docs/procedures/inspection-sop.pdf', related_report_no: null },
+   499→]
+   500→
+   501→const ATTENDANCE_MEMBERS = ['张工', '李工', '王工', '赵工', '刘工']
+   502→const ATTENDANCE_DATES = ['2025-01-06', '2025-01-07', '2025-01-08', '2025-01-09', '2025-01-10', '2025-01-13']
+   503→const ATTENDANCE_POOL = ['出勤', '出勤', '出勤', '出勤', '出勤', '出勤', '出勤', '出勤', '出差', '请假'] // ~80% 出勤
+   504→
+   505→// ============================================================
+   506→//  Seed Function
+   507→// ============================================================
+   508→
+   509→export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
+   510→  const counts: SeedCounts = {
+   511→    part_category: 0, equipment: 0, parameter_template: 0, parameter_item: 0,
+   512→    part: 0, inspection_record: 0, inspection_data_item: 0,
+   513→    analysis_report: 0, task: 0, meeting: 0, meeting_resolution: 0,
+   514→    document: 0, attendance_record: 0,
+   515→  }
+   516→
+   517→  // ─── Step 0: Delete all tables (FK-safe order) ───
+   518→  console.log('[1/10] 清空所有表...')
+   519→  const deleteOps: Promise<any>[] = [
+   520→    prisma.inspection_data_item.deleteMany(),
+   521→    prisma.meeting_resolution.deleteMany(),
+   522→    prisma.inspection_record.deleteMany(),
+   523→    prisma.parameter_item.deleteMany(),
+   524→    prisma.parameter_template.deleteMany(),
+   525→    prisma.part.deleteMany(),
+   526→    prisma.meeting.deleteMany(),
+   527→    prisma.analysis_report.deleteMany(),
+   528→    prisma.task.deleteMany(),
+   529→    prisma.document.deleteMany(),
+   530→    prisma.attendance_record.deleteMany(),
+   531→    prisma.equipment.deleteMany(),
+   532→    prisma.part_category.deleteMany(),
+   533→  ]
+   534→  await Promise.all(deleteOps)
+   535→
+   536→  // ─── Step 1: Categories ───
+   537→  console.log('[2/10] 创建零件类别...')
+   538→  await prisma.part_category.createMany({
+   539→    data: CATEGORIES.map(c => ({ ...c, standard_param_count: 40 })),
+   540→  })
+   541→  const categories = await prisma.part_category.findMany()
+   542→  counts.part_category = categories.length
+   543→  const catMap = new Map(categories.map(c => [c.code, c]))
+   544→
+   545→  // ─── Step 2: Equipment ───
+   546→  console.log('[3/10] 创建设备档案...')
+   547→  await prisma.equipment.createMany({
+   548→    data: EQUIPMENT.map(e => ({
+   549→      ...e,
+   550→      production_date: e.production_date ? new Date(e.production_date) : null,
+   551→    })),
+   552→  })
+   553→  const equipment = await prisma.equipment.findMany()
+   554→  counts.equipment = equipment.length
+   555→  const eqByIdx = [equipment.find(e => e.machine_no === 'ZYT-2024-001')!,
+   556→                    equipment.find(e => e.machine_no === 'ZYT-2024-002')!,
+   557→                    equipment.find(e => e.machine_no === 'ZYT-2024-003')!]
+   558→
+   559→  // ─── Step 3: Parameter Templates & Items ───
+   560→  console.log('[4/10] 创建参数模板和参数项...')
+   561→  const catParamMap = new Map<string, { id: string; stdMin: number | null; stdMax: number | null; optMin: number | null; optMax: number | null; dataType: string; options: string | null }[]>()
+   562→
+   563→  for (const cat of categories) {
+   564→    const params = CATEGORY_PARAMS[cat.code]
+   565→    if (!params) continue
+   566→
+   567→    const template = await prisma.parameter_template.create({
+   568→      data: { category_id: cat.id, name: `${cat.name}检测参数模板 V1`, version: 1 },
+   569→    })
+   570→    counts.parameter_template++
+   571→
+   572→    const paramItemsData = params.map((p, i) => {
+   573→      if (isNP(p)) {
+   574→        return {
+   575→          template_id: template.id,
+   576→          param_name: p.n,
+   577→          param_code: `${cat.code}_${pad3(i)}`,
+   578→          unit: p.u,
+   579→          data_type: 'number',
+   580→          standard_min: p.s[0],
+   581→          standard_max: p.s[1],
+   582→          optimal_min: p.o[0],
+   583→          optimal_max: p.o[1],
+   584→          sort_order: i,
+   585→          options: null,
+   586→        }
+   587→      } else {
+   588→        return {
+   589→          template_id: template.id,
+   590→          param_name: p.n,
+   591→          param_code: `${cat.code}_${pad3(i)}`,
+   592→          unit: p.u,
+   593→          data_type: 'text',
+   594→          standard_min: null,
+   595→          standard_max: null,
+   596→          optimal_min: null,
+   597→          optimal_max: null,
+   598→          sort_order: i,
+   599→          options: p.t,
+   600→        }
+   601→      }
+   602→    })
+   603→
+   604→    await prisma.parameter_item.createMany({ data: paramItemsData })
+   605→    counts.parameter_item += paramItemsData.length
+   606→
+   607→    // Query back to get IDs
+   608→    const createdParams = await prisma.parameter_item.findMany({
+   609→      where: { template_id: template.id },
+   610→      orderBy: { sort_order: 'asc' },
+   611→    })
+   612→    catParamMap.set(cat.id, createdParams.map(cp => ({
+   613→      id: cp.id,
+   614→      stdMin: cp.standard_min,
+   615→      stdMax: cp.standard_max,
+   616→      optMin: cp.optimal_min,
+   617→      optMax: cp.optimal_max,
+   618→      dataType: cp.data_type,
+   619→      options: cp.options,
+   620→    })))
+   621→  }
+   622→
+   623→  // ─── Step 4: Parts ───
+   624→  console.log('[5/10] 创建零件档案...')
+   625→  const partsData = PARTS_DEF.map(([code, name, catCode, eqIdx, spec, material, supplier, wh]) => ({
+   626→    code,
+   627→    name,
+   628→    category_id: catMap.get(catCode)!.id,
+   629→    equipment_id: eqByIdx[eqIdx]?.id ?? null,
+   630→    specification: spec,
+   631→    material,
+   632→    supplier,
+   633→    install_date: new Date('2024-06-01'),
+   634→    working_hours: wh,
+   635→    status: '在用',
+   636→    remark: null,
+   637→  }))
+   638→  await prisma.part.createMany({ data: partsData })
+   639→  const parts = await prisma.part.findMany()
+   640→  counts.part = parts.length
+   641→
+   642→  // Build: equipment_id -> parts[]
+   643→  const eqPartsMap = new Map(equipment.map(e => [e.id, parts.filter(p => p.equipment_id === e.id)]))
+   644→
+   645→  // ─── Step 5: Inspection Records & Data Items ───
+   646→  console.log('[6/10] 创建检测记录和明细数据...')
+   647→  const INSPECTORS = ['张工', '李工', '王工', '赵工', '刘工']
+   648→  const INSPECTION_DATES = [
+   649→    [5, 11, 17, 23, 29], // January
+   650→    [5, 11, 17, 23, 27], // February
+   651→  ]
+   652→  // 2 active equipment (even though equipment 2 is 维修中, it still gets inspections)
+   653→  const ACTIVE_EQ_INDICES = [0, 1]
+   654→
+   655→  for (const eqIdx of ACTIVE_EQ_INDICES) {
+   656→    const eq = eqByIdx[eqIdx]
+   657→    const eqParts = eqPartsMap.get(eq.id) || []
+   658→
+   659→    for (let m = 0; m < 2; m++) {
+   660→      const month = m + 1
+   661→      for (let r = 0; r < 5; r++) {
+   662→        const day = INSPECTION_DATES[m][r]
+   663→        const dateStr = `2025-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+   664→        const recordNo = `JC-2025${String(month).padStart(2, '0')}-${eqIdx + 1}-${String(r + 1).padStart(2, '0')}`
+   665→        const batchNo = `PC-2025${String(month).padStart(2, '0')}-${eqIdx + 1}-${String(r + 1).padStart(2, '0')}`
+   666→
+   667→        const record = await prisma.inspection_record.create({
+   668→          data: {
+   669→            record_no: recordNo,
+   670→            equipment_id: eq.id,
+   671→            inspector: INSPECTORS[(eqIdx * 10 + m * 5 + r) % INSPECTORS.length],
+   672→            batch_no: batchNo,
+   673→            inspection_date: new Date(dateStr),
+   674→            overall_result: '待检',
+   675→            remark: null,
+   676→          },
+   677→        })
+   678→        counts.inspection_record++
+   679→
+   680→        // Generate data items for all parts of this equipment
+   681→        const dataItems: {
+   682→          record_id: string
+   683→          part_id: string
+   684→          param_item_id: string
+   685→          value_number: number | null
+   686→          value_text: string | null
+   687→          is_qualified: boolean | null
+   688→          is_optimal: boolean | null
+   689→        }[] = []
+   690→
+   691→        for (const part of eqParts) {
+   692→          const paramDefs = catParamMap.get(part.category_id)
+   693→          if (!paramDefs) continue
+   694→
+   695→          for (const pd of paramDefs) {
+   696→            if (pd.dataType === 'text' && pd.options) {
+   697→              const opts = pd.options.split(',')
+   698→              const val = opts[Math.floor(Math.random() * opts.length)]
+   699→              const qualified = val === '合格'
+   700→              dataItems.push({
+   701→                record_id: record.id,
+   702→                part_id: part.id,
+   703→                param_item_id: pd.id,
+   704→                value_number: null,
+   705→                value_text: val,
+   706→                is_qualified: qualified,
+   707→                is_optimal: qualified,
+   708→              })
+   709→            } else if (pd.stdMin !== null && pd.stdMax !== null && pd.optMin !== null && pd.optMax !== null) {
+   710→              const mean = (pd.stdMin + pd.stdMax) / 2
+   711→              const stdDev = (pd.stdMax - pd.stdMin) / 4
+   712→              const value = Math.round(normalRandom(mean, stdDev) * 100) / 100
+   713→              const qualified = value >= pd.stdMin && value <= pd.stdMax
+   714→              const optimal = value >= pd.optMin && value <= pd.optMax
+   715→              dataItems.push({
+   716→                record_id: record.id,
+   717→                part_id: part.id,
+   718→                param_item_id: pd.id,
+   719→                value_number: value,
+   720→                value_text: null,
+   721→                is_qualified: qualified,
+   722→                is_optimal: optimal,
+   723→              })
+   724→            }
+   725→          }
+   726→        }
+   727→
+   728→        await prisma.inspection_data_item.createMany({ data: dataItems })
+   729→        counts.inspection_data_item += dataItems.length
+   730→
+   731→        // Update overall_result based on qualification rate
+   732→        const qCount = dataItems.filter(d => d.is_qualified).length
+   733→        const qRate = dataItems.length > 0 ? qCount / dataItems.length : 0
+   734→        let overallResult = '不合格'
+   735→        if (qRate >= 0.95) overallResult = '优秀'
+   736→        else if (qRate >= 0.80) overallResult = '合格'
+   737→        else if (qRate >= 0.60) overallResult = '待修'
+   738→
+   739→        await prisma.inspection_record.update({
+   740→          where: { id: record.id },
+   741→          data: { overall_result: overallResult },
+   742→        })
+   743→      }
+   744→    }
+   745→  }
+   746→
+   747→  // ─── Step 6: Reports ───
+   748→  console.log('[7/10] 创建分析报告...')
+   749→  await prisma.analysis_report.createMany({ data: REPORTS })
+   750→  counts.analysis_report = REPORTS.length
+   751→
+   752→  // ─── Step 7: Tasks ───
+   753→  console.log('[8/10] 创建任务...')
+   754→  await prisma.task.createMany({
+   755→    data: TASKS.map(t => ({
+   756→      ...t,
+   757→      due_date: t.due_date ? new Date(t.due_date) : null,
+   758→    })),
+   759→  })
+   760→  counts.task = TASKS.length
+   761→
+   762→  // ─── Step 8: Meetings & Resolutions ───
+   763→  console.log('[9/10] 创建会议和决议...')
+   764→  await prisma.meeting.createMany({
+   765→    data: MEETINGS.map(m => ({
+   766→      ...m,
+   767→      meeting_date: new Date(m.meeting_date),
+   768→    })),
+   769→  })
+   770→  const createdMeetings = await prisma.meeting.findMany({ orderBy: { meeting_date: 'asc' } })
+   771→  counts.meeting = createdMeetings.length
+   772→
+   773→  const resolutionData = RESOLUTIONS.map(r => ({
+   774→    meeting_id: createdMeetings[r.meeting_idx].id,
+   775→    content: r.content,
+   776→    responsible_person: r.responsible_person,
+   777→    due_date: r.due_date ? new Date(r.due_date) : null,
+   778→    status: r.status,
+   779→  }))
+   780→  await prisma.meeting_resolution.createMany({ data: resolutionData })
+   781→  counts.meeting_resolution = resolutionData.length
+   782→
+   783→  // ─── Step 9: Documents & Attendance ───
+   784→  console.log('[10/10] 创建文档和考勤记录...')
+   785→
+   786→  // Documents: resolve related_report_id
+   787→  const reportIdMap = new Map<string, string>()
+   788→  const allReports = await prisma.analysis_report.findMany()
+   789→  for (const r of allReports) reportIdMap.set(r.report_no, r.id)
+   790→
+   791→  await prisma.document.createMany({
+   792→    data: DOCUMENTS.map(d => ({
+   793→      title: d.title,
+   794→      category: d.category,
+   795→      file_path: d.file_path,
+   796→      related_report_id: d.related_report_no ? reportIdMap.get(d.related_report_no) || null : null,
+   797→      archived: false,
+   798→    })),
+   799→  })
+   800→  counts.document = DOCUMENTS.length
+   801→
+   802→  // Attendance
+   803→  const attendanceData = ATTENDANCE_MEMBERS.flatMap(name =>
+   804→    ATTENDANCE_DATES.map(date => ({
+   805→      date: new Date(date),
+   806→      member_name: name,
+   807→      status: ATTENDANCE_POOL[Math.floor(Math.random() * ATTENDANCE_POOL.length)],
+   808→      remark: null,
+   809→    })),
+   810→  )
+   811→  await prisma.attendance_record.createMany({ data: attendanceData })
+   812→  counts.attendance_record = attendanceData.length
+   813→
+   814→  // ─── Summary ───
+   815→  console.log('\n✅ 种子数据创建完成！')
+   816→  console.table(counts)
+   817→  return counts
+   818→}
+   819→
+   820→// ============================================================
+   821→//  Standalone Execution
+   822→// ============================================================
+   823→
+   824→async function main() {
+   825→  const prisma = new PrismaClient()
+   826→  try {
+   827→    const counts = await seedDatabase(prisma)
+   828→    console.log('\nDone. Total inspection_data_item:', counts.inspection_data_item)
+   829→    process.exit(0)
+   830→  } catch (err) {
+   831→    console.error('Seed failed:', err)
+   832→    process.exit(1)
+   833→  } finally {
+   834→    await prisma.$disconnect()
+   835→  }
+   836→}
+   837→
+   838→// Only run when executed directly (npx tsx scripts/seed.ts), not when imported
+   839→import { fileURLToPath } from 'url'
+   840→if (fileURLToPath(import.meta.url) === process.argv[1]) {
+   841→  main()
+   842→}
