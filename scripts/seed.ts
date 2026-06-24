@@ -514,24 +514,24 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
     document: 0, attendance_record: 0,
   }
 
-  // ─── Step 0: Delete all tables (FK-safe order) ───
+  // ─── Step 0: Delete all tables (FK-safe order, sequential for PostgreSQL) ───
   console.log('[1/10] 清空所有表...')
   const deleteOps: Promise<any>[] = [
-    prisma.inspection_data_item.deleteMany(),
-    prisma.meeting_resolution.deleteMany(),
-    prisma.inspection_record.deleteMany(),
-    prisma.parameter_item.deleteMany(),
-    prisma.parameter_template.deleteMany(),
-    prisma.part.deleteMany(),
-    prisma.meeting.deleteMany(),
-    prisma.analysis_report.deleteMany(),
-    prisma.task.deleteMany(),
-    prisma.document.deleteMany(),
-    prisma.attendance_record.deleteMany(),
-    prisma.equipment.deleteMany(),
-    prisma.part_category.deleteMany(),
+    prisma.inspection_data_item.deleteMany(),   // ①
+    prisma.meeting_resolution.deleteMany(),      // ②
+    prisma.meeting.deleteMany(),                 // ③
+    prisma.inspection_record.deleteMany(),       // ④
+    prisma.parameter_item.deleteMany(),          // ⑤
+    prisma.parameter_template.deleteMany(),      // ⑥
+    prisma.part.deleteMany(),                    // ⑦
+    prisma.document.deleteMany(),                // ⑧
+    prisma.analysis_report.deleteMany(),         // ⑨
+    prisma.task.deleteMany(),                    // ⑩
+    prisma.attendance_record.deleteMany(),       // ⑪
+    prisma.equipment.deleteMany(),               // ⑫
+    prisma.part_category.deleteMany(),           // ⑬
   ]
-  await Promise.all(deleteOps)
+  for (const op of deleteOps) await op
 
   // ─── Step 1: Categories ───
   console.log('[2/10] 创建零件类别...')
