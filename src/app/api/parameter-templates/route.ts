@@ -6,9 +6,15 @@ import { Prisma } from '@prisma/client'
 // GET — list all templates with items
 // ============================================================
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const categoryId = req.nextUrl.searchParams.get('categoryId')
+    const where: Prisma.parameter_templateWhereInput = categoryId
+      ? { category_id: categoryId }
+      : {}
+
     const templates = await db.parameter_template.findMany({
+      where,
       include: {
         category: { select: { id: true, name: true, code: true } },
         items: { orderBy: { sort_order: 'asc' } },
