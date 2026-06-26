@@ -1,1 +1,1 @@
-export { default as InspectionLedgerView } from './LedgerView'
+export { default } from './LedgerView'
