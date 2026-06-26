@@ -577,3 +577,66 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 
 - Next.js 16 proxy 模式下 middleware 的 auth 初始化错误（MissingSecret）导致 API 请求被重定向到 /login，非本 API 问题
 - 本地验证通过独立 tsx 脚本完成
+
+---
+
+## Spec-014 - 部门工作台（Workspace）
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/components/workspace/WorkspaceView.tsx` | 主入口，4 Tab 切换（任务/会议/文件/考勤） |
+| `src/components/workspace/TaskBoard.tsx` | 任务管理：4 列看板 + 新建/编辑/状态流转/删除 |
+| `src/components/workspace/MeetingManager.tsx` | 会议管理：列表 + 新建/详情 Dialog + 纪要编辑 + 决议事项 + 关联任务生成 |
+| `src/components/workspace/DocumentArchive.tsx` | 文件归档：按类别分组列表 + 上传 Dialog + 归档切换 + 搜索筛选 |
+| `src/components/workspace/AttendanceHelper.tsx` | 考勤辅助：月度表格 + 单元格下拉选择 + 统计行 + 月份翻页 |
+| `src/app/api/tasks/route.ts` | GET/POST/PUT/DELETE 任务 CRUD + 状态流转校验 |
+| `src/app/api/meetings/route.ts` | GET/POST/PUT 会议列表/新建/更新（含纪要） |
+| `src/app/api/meetings/resolutions/route.ts` | GET/POST/PUT 决议 CRUD + 自动生成关联任务 |
+| `src/app/api/documents/route.ts` | GET/POST/PUT/DELETE 文档 CRUD + FormData 文件上传 |
+| `src/app/api/attendance/route.ts` | GET/POST/PUT 考勤记录按月查询 + 批量 upsert |
+
+### 功能实现
+
+**任务管理（TaskBoard）**
+- 4 列看板：待办/进行中/已完成/已关闭，横向滚动
+- 任务卡片：优先级色条（高=红/中=琥珀/低=绿）+ 类型 Badge + 负责人 + 截止日期（逾期红）
+- 新建/编辑 Dialog（标题/描述/优先级/类型/负责人/截止日期）
+- 状态流转按钮（待办→进行中→已完成→已关闭 + 快捷关闭）
+- 删除确认弹窗
+- 4 个 StatCard：总数/待办/进行中/已完成
+
+**会议管理（MeetingManager）**
+- 会议卡片列表：标题/日期/地点/组织人/参会人 Badge/状态 Badge
+- 新建会议 Dialog
+- 详情 Dialog：会议信息 + 状态流转 + 纪要 Textarea 编辑 + 决议列表
+- 决议管理：新增决议 + 负责人 + 截止日期 + "生成关联任务"复选框
+- 决议状态流转（待执行→执行中→已完成）
+
+**文件归档（DocumentArchive）**
+- 3 个 StatCard：文档总数/已归档/未归档
+- 搜索 + 类别 Tab 筛选（全部/报告/纪要/标准/制度/其他）
+- 按类别分组展示文档卡片
+- 上传 Dialog：标题/类别/关联报告/拖拽文件上传
+- 归档/取消归档切换 + 删除确认
+
+**考勤辅助（AttendanceHelper）**
+- 月份前后翻页导航
+- 4 个 StatCard：全勤人数/请假人次/迟到人次/出差人次
+- 成员 × 日期考勤表格（横向滚动，首列 sticky）
+- 单元格点击弹出 Select 下拉（出勤/请假/迟到/出差）
+- 颜色编码（出勤=绿/请假=琥珀/迟到=红/出差=蓝）
+- 周末列灰色背景
+- 每人统计行 + 底部合计行
+
+### ESLint 检查
+
+- 新增文件 0 errors, 0 warnings
+- 已知 pre-existing 问题：FilterBar.tsx（1 error）+ 3 个 warnings
+
+### 验证状态
+
+- [x] 代码生成完成
+- [x] ESLint 通过（无新增错误）
+- [x] Git commit `6cd58d1`
