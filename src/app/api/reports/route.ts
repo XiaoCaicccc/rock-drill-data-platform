@@ -71,3 +71,85 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ report }, { status: 201 })
 }
+
+// ─── PUT: 更新报告内容 / 状态流转 ───
+
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  '草稿': ['已发布'],
+  '已发布': ['已归档'],
+  '已归档': [],
+}
+
+export async function PUT(request: NextRequest) {
+  const session = await auth()
+  if (!session?.user) {
+    return NextResponse.json({ error: '未登录' }, { status: 401 })
+  }
+
+  const body = await request.json()
+  const { id, title, type, period, summary, conclusion, author, status } = body
+
+  if (!id) {
+    return NextResponse.json({ error: '缺少报告 ID' }, { status: 400 })
+  }
+
+  const existing = await db.analysis_report.findUnique({ where: { id } })
+  if (!existing) {
+    return NextResponse.json({ error: '报告不存在' }, { status: 404 })
+  }
+
+  // 状态流转校验
+  if (status && status !== existing.status) {
+    const allowed = VALID_TRANSITIONS[existing.status] ?? []
+    if (!allowed.includes(status)) {
+      return NextResponse.json(
+        { error: `不允许从"${existing.status}"转为"${status}"，合法目标：${allowed.join('、') || '无'}` },
+        { status: 400 },
+      )
+    }
+  }
+
+  const data: Record<string, unknown> = {}
+  if (title !== undefined) data.title = title
+  if (type !== undefined) data.type = type
+  if (period !== undefined) data.period = period || null
+  if (summary !== undefined) data.summary = summary || null
+  if (conclusion !== undefined) data.conclusion = conclusion || null
+  if (author !== undefined) data.author = author
+  if (status !== undefined) data.status = status
+
+  const updated = await db.analysis_report.update({
+    where: { id },
+    data,
+  })
+
+  return NextResponse.json({ report: updated })
+}
+
+// ─── DELETE: 删除报告（仅草稿可删） ───
+
+export async function DELETE(request: NextRequest) {
+  const session = await auth()
+  if (!session?.user) {
+    return NextResponse.json({ error: '未登录' }, { status: 401 })
+  }
+
+  const id = request.nextUrl.searchParams.get('id')
+  if (!id) {
+    return NextResponse.json({ error: '缺少报告 ID' }, { status: 400 })
+  }
+
+  const existing = await db.analysis_report.findUnique({ where: { id } })
+  if (!existing) {
+    return NextResponse.json({ error: '报告不存在' }, { status: 404 })
+  }
+  if (existing.status !== '草稿') {
+    return NextResponse.json(
+      { error: `仅草稿状态可删除，当前状态为"${existing.status}"` },
+      { status: 409 },
+    )
+  }
+
+  await db.analysis_report.delete({ where: { id } })
+  return NextResponse.json({ success: true })
+}
