@@ -521,3 +521,59 @@ Spec-005 将 EquipmentView 从 CategoryManager 替换为设备档案管理。Cat
 - [ ] Tab 键在可编辑单元格间导航
 - [ ] 范围校验红框显示
 - [ ] 提交全流程（含 record_no 生成和合格判定）
+
+---
+
+## Spec-012a - 配合参数分析 API（param-comparison）
+
+### 产出文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/app/api/analysis/param-comparison/route.ts` | GET 参数对比分析 API |
+
+### API 设计
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `paramA_id` | ✅ | 参数项 A 的 ID |
+| `paramB_id` | ✅ | 参数项 B 的 ID |
+| `category_id` | ❌ | 限定零件类别 |
+| `equipment_id` | ❌ | 限定设备 |
+
+### 返回格式
+
+```json
+{
+  "paramA": { "id", "param_name", "param_code", "unit" },
+  "paramB": { 同上 },
+  "dataPoints": [{ "valueA", "valueB", "isQualified", "partCode", "recordNo" }],
+  "correlation": 0.0114,
+  "distributionA": [{ "rangeLabel": "89.02~89.22", "count": 2 }, ...共10个区间],
+  "distributionB": [{ 同上 }]
+}
+```
+
+### 技术实现
+
+- **内连接**：分两次查询 paramA/paramB 的 data_items，按 record_id 建 Map 做内存内连接
+- **皮尔逊相关系数**：手写公式 `r = (nΣxy - ΣxΣy) / sqrt((nΣx²-(Σx)²)(nΣy²-(Σy)²))`，保留 4 位小数
+- **直方图**：等宽 10 区间，处理全相同值（width=1）和边界值（clamp 0~9）
+- **过滤**：category_id → part.category_id，equipment_id → record.equipment_id
+- **校验**：参数不存在返回 404，两个 ID 相同返回 400
+
+### 验证结果
+
+| 测试 | 结果 |
+|------|------|
+| 无参数 → 400 | ✅ |
+| 相同 ID → 400 | ✅ |
+| 有效请求，20 dataPoints，correlation=0.0114 | ✅ |
+| 加 category_id + equipment_id 过滤 → 10 points，correlation=0.3712 | ✅ |
+| distributionA/B 各 10 个区间，count 总和 = dataPoints 数 | ✅ |
+| dataPoint 字段：valueA, valueB, isQualified, partCode, recordNo | ✅ |
+
+### 环境问题（已有）
+
+- Next.js 16 proxy 模式下 middleware 的 auth 初始化错误（MissingSecret）导致 API 请求被重定向到 /login，非本 API 问题
+- 本地验证通过独立 tsx 脚本完成
