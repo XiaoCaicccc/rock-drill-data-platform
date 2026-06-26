@@ -1,36 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 
-// ─── GET: 任务列表（按角色过滤） ───
+// ─── GET: 任务列表 ───
 
 export async function GET(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
-
-  const userId = (session.user as { id?: string }).id
-  const role = (session.user as { role?: string }).role
-
   const { searchParams } = new URL(request.url)
-  const keyword = searchParams.get('keyword') || ''
   const status = searchParams.get('status') || ''
-  const priority = searchParams.get('priority') || ''
 
-  const where: any = {}
-  if (keyword) {
-    where.OR = [
-      { title: { contains: keyword, mode: 'insensitive' } },
-      { description: { contains: keyword, mode: 'insensitive' } },
-    ]
-  }
+  const where: Record<string, unknown> = {}
   if (status) where.status = status
-  if (priority) where.priority = priority
-  // 普通用户只能看自己的任务
-  if (role !== 'admin' && userId) {
-    where.user_id = userId
-  }
 
   const tasks = await db.task.findMany({
     where,
@@ -40,33 +18,90 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ tasks })
 }
 
-// ─── POST: 创建任务（自动关联当前用户） ───
+// ─── POST: 创建任务 ───
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
-
-  const userId = (session.user as { id?: string }).id
   const body = await request.json()
-  const { title, description, priority, task_type, due_date, assignee } = body
+  const { title, description, priority, status, assignee, due_date, task_type } = body
 
-  if (!title) {
+  if (!title?.trim()) {
     return NextResponse.json({ error: '标题不能为空' }, { status: 400 })
   }
 
   const task = await db.task.create({
     data: {
-      title,
+      title: title.trim(),
       description: description || null,
       priority: priority || '中',
-      task_type: task_type || '常规',
-      due_date: due_date ? new Date(due_date) : null,
+      status: status || '待办',
       assignee: assignee || null,
-      user_id: userId,
+      due_date: due_date ? new Date(due_date) : null,
+      task_type: task_type || '常规',
     },
   })
 
   return NextResponse.json({ task }, { status: 201 })
+}
+
+// ─── PUT: 更新任务 ───
+
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  '待办': ['进行中', '已关闭'],
+  '进行中': ['已完成', '已关闭'],
+  '已完成': ['已关闭'],
+  '已关闭': [],
+}
+
+export async function PUT(request: NextRequest) {
+  const body = await request.json()
+  const { id, title, description, priority, status, assignee, due_date, task_type } = body
+
+  if (!id) {
+    return NextResponse.json({ error: '缺少任务 ID' }, { status: 400 })
+  }
+
+  const existing = await db.task.findUnique({ where: { id } })
+  if (!existing) {
+    return NextResponse.json({ error: '任务不存在' }, { status: 404 })
+  }
+
+  if (status && status !== existing.status) {
+    const allowed = VALID_TRANSITIONS[existing.status] ?? []
+    if (!allowed.includes(status)) {
+      return NextResponse.json(
+        { error: `不允许从"${existing.status}"转为"${status}"，合法目标：${allowed.join('、') || '无'}` },
+        { status: 400 },
+      )
+    }
+  }
+
+  const data: Record<string, unknown> = {}
+  if (title !== undefined) data.title = title.trim()
+  if (description !== undefined) data.description = description || null
+  if (priority !== undefined) data.priority = priority
+  if (status !== undefined) data.status = status
+  if (assignee !== undefined) data.assignee = assignee || null
+  if (due_date !== undefined) data.due_date = due_date ? new Date(due_date) : null
+  if (task_type !== undefined) data.task_type = task_type
+
+  const updated = await db.task.update({ where: { id }, data })
+
+  return NextResponse.json({ task: updated })
+}
+
+// ─── DELETE: 删除任务（仅待办/已关闭可删） ───
+
+export async function DELETE(request: NextRequest) {
+  const id = request.nextUrl.searchParams.get('id')
+  if (!id) {
+    return NextResponse.json({ error: '缺少任务 ID' }, { status: 400 })
+  }
+
+  const existing = await db.task.findUnique({ where: { id } })
+  if (!existing) {
+    return NextResponse.json({ error: '任务不存在' }, { status: 404 })
+  }
+
+  await db.task.delete({ where: { id } })
+  return NextResponse.json({ success: true })
 }
