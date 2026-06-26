@@ -1,0 +1,808 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+     4→import {
+     5→  ScatterChart,
+     6→  Scatter,
+     7→  XAxis,
+     8→  YAxis,
+     9→  CartesianGrid,
+    10→  Tooltip,
+    11→  Legend,
+    12→  ResponsiveContainer,
+    13→  BarChart,
+    14→  Bar,
+    15→  ReferenceLine,
+    16→} from 'recharts'
+    17→import {
+    18→  Card,
+    19→  CardContent,
+    20→  CardHeader,
+    21→  CardTitle,
+    22→  CardDescription,
+    23→} from '@/components/ui/card'
+    24→import {
+    25→  Select,
+    26→  SelectContent,
+    27→  SelectItem,
+    28→  SelectTrigger,
+    29→  SelectValue,
+    30→} from '@/components/ui/select'
+    31→import { Label } from '@/components/ui/label'
+    32→import { Badge } from '@/components/ui/badge'
+    33→import { Skeleton } from '@/components/ui/skeleton'
+    34→import { PageHeader } from '@/components/common/PageHeader'
+    35→import { EmptyState } from '@/components/common/EmptyState'
+    36→import { ArrowRightLeft, BarChart3 } from 'lucide-react'
+    37→
+    38→/* ================================================================
+    39→   Types
+    40→   ================================================================ */
+    41→
+    42→interface ParamItem {
+    43→  id: string
+    44→  param_name: string
+    45→  param_code: string
+    46→  unit: string | null
+    47→  data_type: string
+    48→  standard_min: number | null
+    49→  standard_max: number | null
+    50→  optimal_min: number | null
+    51→  optimal_max: number | null
+    52→}
+    53→
+    54→interface Category {
+    55→  id: string
+    56→  name: string
+    57→  code: string
+    58→  part_count: number
+    59→  template: { items: ParamItem[] } | null
+    60→}
+    61→
+    62→interface Equipment {
+    63→  id: string
+    64→  machine_no: string
+    65→  model: string
+    66→}
+    67→
+    68→interface DataPoint {
+    69→  valueA: number
+    70→  valueB: number
+    71→  isQualified: boolean
+    72→  partCode: string
+    73→  recordNo: string
+    74→}
+    75→
+    76→interface ParamInfo {
+    77→  id: string
+    78→  param_name: string
+    79→  param_code: string
+    80→  unit: string
+    81→}
+    82→
+    83→interface DistBin {
+    84→  rangeLabel: string
+    85→  count: number
+    86→}
+    87→
+    88→interface AnalysisResult {
+    89→  paramA: ParamInfo
+    90→  paramB: ParamInfo
+    91→  dataPoints: DataPoint[]
+    92→  correlation: number | null
+    93→  distributionA: DistBin[]
+    94→  distributionB: DistBin[]
+    95→}
+    96→
+    97→interface ParsedBin {
+    98→  index: number
+    99→  rangeLabel: string
+   100→  lo: number
+   101→  hi: number
+   102→  count: number
+   103→}
+   104→
+   105→/* ================================================================
+   106→   Helpers
+   107→   ================================================================ */
+   108→
+   109→function parseBins(distribution: DistBin[]): ParsedBin[] {
+   110→  return distribution.map((d, i) => {
+   111→    const [loStr, hiStr] = d.rangeLabel.split('~')
+   112→    const lo = parseFloat(loStr)
+   113→    const hi = parseFloat(hiStr)
+   114→    return { index: i, rangeLabel: d.rangeLabel, lo, hi, count: d.count }
+   115→  })
+   116→}
+   117→
+   118→function valueToBinIndex(value: number, bins: ParsedBin[]): number | null {
+   119→  if (!bins.length) return null
+   120→  const rangeStart = bins[0].lo
+   121→  const rangeEnd = bins[bins.length - 1].hi
+   122→  const totalRange = rangeEnd - rangeStart
+   123→  if (totalRange === 0) return null
+   124→  if (value < rangeStart || value > rangeEnd) return null
+   125→  // Bin 0 center = index 0 → (value - rangeStart) / binWidth - 0.5
+   126→  return (value - rangeStart) / (totalRange / 10) - 0.5
+   127→}
+   128→
+   129→function calcStats(values: number[]) {
+   130→  const n = values.length
+   131→  if (n === 0) return { mean: 0, std: 0, n: 0 }
+   132→  const mean = values.reduce((s, v) => s + v, 0) / n
+   133→  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / n
+   134→  return { mean, std: Math.sqrt(variance), n }
+   135→}
+   136→
+   137→function getCorrelationInfo(r: number) {
+   138→  const abs = Math.abs(r)
+   139→  if (abs >= 0.8)
+   140→    return {
+   141→      label: r >= 0 ? '强正相关' : '强负相关',
+   142→      color: r >= 0 ? 'text-emerald-600' : 'text-red-600',
+   143→      bg: r >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200',
+   144→      badge: r >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700',
+   145→    }
+   146→  if (abs >= 0.5)
+   147→    return {
+   148→      label: r >= 0 ? '中等正相关' : '中等负相关',
+   149→      color: r >= 0 ? 'text-teal-600' : 'text-orange-600',
+   150→      bg: r >= 0 ? 'bg-teal-50 border-teal-200' : 'bg-orange-50 border-orange-200',
+   151→      badge: r >= 0 ? 'bg-teal-100 text-teal-700' : 'bg-orange-100 text-orange-700',
+   152→    }
+   153→  if (abs >= 0.3)
+   154→    return {
+   155→      label: r >= 0 ? '弱正相关' : '弱负相关',
+   156→      color: 'text-amber-600',
+   157→      bg: 'bg-amber-50 border-amber-200',
+   158→      badge: 'bg-amber-100 text-amber-700',
+   159→    }
+   160→  return {
+   161→    label: '无明显相关',
+   162→    color: 'text-slate-500',
+   163→    bg: 'bg-slate-50 border-slate-200',
+   164→    badge: 'bg-slate-100 text-slate-700',
+   165→  }
+   166→}
+   167→
+   168→/* ================================================================
+   169→   Sub-components
+   170→   ================================================================ */
+   171→
+   172→/** 散点图 Tooltip */
+   173→function ScatterTooltip({
+   174→  active,
+   175→  payload,
+   176→  nameA,
+   177→  unitA,
+   178→  nameB,
+   179→  unitB,
+   180→}: {
+   181→  active?: boolean
+   182→  payload?: Array<{ payload: DataPoint }>
+   183→  nameA: string
+   184→  unitA: string
+   185→  nameB: string
+   186→  unitB: string
+   187→}) {
+   188→  if (!active || !payload?.length) return null
+   189→  const d = payload[0].payload
+   190→  return (
+   191→    <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-md">
+   192→      <div className="font-medium">
+   193→        {d.partCode} · {d.recordNo}
+   194→      </div>
+   195→      <div className="mt-1 space-y-0.5 text-muted-foreground">
+   196→        <div>
+   197→          {nameA}: <span className="font-medium text-foreground">{d.valueA}</span> {unitA}
+   198→        </div>
+   199→        <div>
+   200→          {nameB}: <span className="font-medium text-foreground">{d.valueB}</span> {unitB}
+   201→        </div>
+   202→        <div>
+   203→          状态:{' '}
+   204→          <span className={d.isQualified ? 'text-emerald-600' : 'text-red-600'}>
+   205→            {d.isQualified ? '合格' : '不合格'}
+   206→          </span>
+   207→        </div>
+   208→      </div>
+   209→    </div>
+   210→  )
+   211→}
+   212→
+   213→/** 直方图 Tooltip */
+   214→function HistTooltip({
+   215→  active,
+   216→  payload,
+   217→}: {
+   218→  active?: boolean
+   219→  payload?: Array<{ payload: ParsedBin }>
+   220→}) {
+   221→  if (!active || !payload?.length) return null
+   222→  const d = payload[0].payload
+   223→  return (
+   224→    <div className="rounded-lg border bg-background px-2.5 py-1.5 text-xs shadow-sm">
+   225→      <div className="font-medium">{d.rangeLabel}</div>
+   226→      <div className="text-muted-foreground">频次: {d.count}</div>
+   227→    </div>
+   228→  )
+   229→}
+   230→
+   231→/** 单参数直方图卡片 */
+   232→function HistogramCard({
+   233→  title,
+   234→  unit,
+   235→  param,
+   236→  distribution,
+   237→}: {
+   238→  title: string
+   239→  unit: string
+   240→  param: ParamItem | undefined
+   241→  distribution: DistBin[]
+   242→}) {
+   243→  const bins = useMemo(() => parseBins(distribution), [distribution])
+   244→  if (!bins.length) return null
+   245→
+   246→  // 计算标准/最优区间的 bin index 位置（用于 ReferenceLine）
+   247→  const refLine = (value: number | null) =>
+   248→    value != null ? valueToBinIndex(value, bins) : null
+   249→
+   250→  const stdMin = refLine(param?.standard_min)
+   251→  const stdMax = refLine(param?.standard_max)
+   252→  const optMin = refLine(param?.optimal_min)
+   253→  const optMax = refLine(param?.optimal_max)
+   254→  const hasStd = stdMin != null || stdMax != null
+   255→  const hasOpt = optMin != null || optMax != null
+   256→
+   257→  return (
+   258→    <Card>
+   259→      <CardHeader className="pb-2">
+   260→        <CardTitle className="flex items-center gap-2 text-base">
+   261→          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+   262→          {title}
+   263→          {unit && (
+   264→            <span className="text-xs font-normal text-muted-foreground">
+   265→              ({unit})
+   266→            </span>
+   267→          )}
+   268→        </CardTitle>
+   269→      </CardHeader>
+   270→      <CardContent>
+   271→        <ResponsiveContainer width="100%" height={220}>
+   272→          <BarChart data={bins} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
+   273→            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+   274→            <XAxis
+   275→              type="number"
+   276→              dataKey="index"
+   277→              domain={[-0.5, 9.5]}
+   278→              ticks={bins.map((_, i) => i)}
+   279→              tickFormatter={(i: number) => bins[i]?.lo.toFixed(1) ?? ''}
+   280→              tick={{ fontSize: 9, angle: -45, textAnchor: 'end' }}
+   281→              interval={0}
+   282→              height={50}
+   283→            />
+   284→            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+   285→            <Tooltip
+   286→              content={<HistTooltip />}
+   287→              cursor={{ fill: 'hsl(var(--muted) / 0.3)' }}
+   288→            />
+   289→            <Bar dataKey="count" fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} />
+   290→
+   291→            {/* 标准区间 — 蓝色虚线 */}
+   292→            {stdMin != null && (
+   293→              <ReferenceLine
+   294→                x={stdMin}
+   295→                stroke="#3b82f6"
+   296→                strokeDasharray="6 3"
+   297→                strokeWidth={1.5}
+   298→                label={{ value: '标准下限', position: 'top', fontSize: 10, fill: '#3b82f6' }}
+   299→              />
+   300→            )}
+   301→            {stdMax != null && (
+   302→              <ReferenceLine
+   303→                x={stdMax}
+   304→                stroke="#3b82f6"
+   305→                strokeDasharray="6 3"
+   306→                strokeWidth={1.5}
+   307→                label={{ value: '标准上限', position: 'top', fontSize: 10, fill: '#3b82f6' }}
+   308→              />
+   309→            )}
+   310→            {/* 最优区间 — 绿色虚线 */}
+   311→            {optMin != null && (
+   312→              <ReferenceLine
+   313→                x={optMin}
+   314→                stroke="#22c55e"
+   315→                strokeDasharray="6 3"
+   316→                strokeWidth={1.5}
+   317→                label={{ value: '最优下限', position: 'insideTopRight', fontSize: 10, fill: '#22c55e' }}
+   318→              />
+   319→            )}
+   320→            {optMax != null && (
+   321→              <ReferenceLine
+   322→                x={optMax}
+   323→                stroke="#22c55e"
+   324→                strokeDasharray="6 3"
+   325→                strokeWidth={1.5}
+   326→                label={{ value: '最优上限', position: 'insideTopRight', fontSize: 10, fill: '#22c55e' }}
+   327→              />
+   328→            )}
+   329→          </BarChart>
+   330→        </ResponsiveContainer>
+   331→
+   332→        {/* 图例 */}
+   333→        {(hasStd || hasOpt) && (
+   334→          <div className="mt-1 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+   335→            {hasStd && (
+   336→              <span className="flex items-center gap-1.5">
+   337→                <span className="inline-block h-0 w-4 border-t-2 border-dashed border-blue-500" />
+   338→                标准区间
+   339→              </span>
+   340→            )}
+   341→            {hasOpt && (
+   342→              <span className="flex items-center gap-1.5">
+   343→                <span className="inline-block h-0 w-4 border-t-2 border-dashed border-green-500" />
+   344→                最优区间
+   345→              </span>
+   346→            )}
+   347→          </div>
+   348→        )}
+   349→      </CardContent>
+   350→    </Card>
+   351→  )
+   352→}
+   353→
+   354→/** 加载骨架屏 */
+   355→function LoadingSkeleton() {
+   356→  return (
+   357→    <div className="space-y-6">
+   358→      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+   359→        <div className="lg:col-span-2">
+   360→          <Card><CardContent className="pt-6"><Skeleton className="h-[380px] w-full" /></CardContent></Card>
+   361→        </div>
+   362→        <Card><CardContent className="pt-6"><Skeleton className="h-[380px] w-full" /></CardContent></Card>
+   363→      </div>
+   364→      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+   365→        <Card><CardContent className="pt-6"><Skeleton className="h-[280px] w-full" /></CardContent></Card>
+   366→        <Card><CardContent className="pt-6"><Skeleton className="h-[280px] w-full" /></CardContent></Card>
+   367→      </div>
+   368→      <Card><CardContent className="pt-6"><Skeleton className="h-24 w-full" /></CardContent></Card>
+   369→    </div>
+   370→  )
+   371→}
+   372→
+   373→/* ================================================================
+   374→   Main Component
+   375→   ================================================================ */
+   376→
+   377→export default function AnalysisView() {
+   378→  /* ── state ── */
+   379→  const [categories, setCategories] = useState<Category[]>([])
+   380→  const [equipment, setEquipment] = useState<Equipment[]>([])
+   381→  const [parameters, setParameters] = useState<ParamItem[]>([])
+   382→
+   383→  const [categoryId, setCategoryId] = useState('')
+   384→  const [paramAId, setParamAId] = useState('')
+   385→  const [paramBId, setParamBId] = useState('')
+   386→  const [equipmentId, setEquipmentId] = useState('')
+   387→
+   388→  const [result, setResult] = useState<AnalysisResult | null>(null)
+   389→  const [loading, setLoading] = useState(false)
+   390→  const [initLoading, setInitLoading] = useState(true)
+   391→  const [paramLoading, setParamLoading] = useState(false)
+   392→  const [error, setError] = useState<string | null>(null)
+   393→
+   394→  const abortRef = useRef<AbortController>(null)
+   395→
+   396→  /* ── 1. 加载类别 + 设备 ── */
+   397→  useEffect(() => {
+   398→    let cancelled = false
+   399→    ;(async () => {
+   400→      try {
+   401→        const [catRes, eqRes] = await Promise.all([
+   402→          fetch('/api/categories'),
+   403→          fetch('/api/equipment'),
+   404→        ])
+   405→        if (cancelled) return
+   406→        const catData = await catRes.json()
+   407→        const eqData = await eqRes.json()
+   408→        setCategories(catData.categories ?? [])
+   409→        setEquipment(eqData.equipment ?? [])
+   410→      } catch {
+   411→        /* silent */
+   412→      } finally {
+   413→        if (!cancelled) setInitLoading(false)
+   414→      }
+   415→    })()
+   416→    return () => { cancelled = true }
+   417→  }, [])
+   418→
+   419→  /* ── 2. 类别变更 → 加载参数列表 ── */
+   420→  useEffect(() => {
+   421→    setParamAId('')
+   422→    setParamBId('')
+   423→    setResult(null)
+   424→    setError(null)
+   425→
+   426→    if (!categoryId) { setParameters([]); return }
+   427→
+   428→    let cancelled = false
+   429→    setParamLoading(true)
+   430→    ;(async () => {
+   431→      try {
+   432→        const res = await fetch(`/api/parameter-templates?categoryId=${categoryId}`)
+   433→        if (cancelled) return
+   434→        const data = await res.json()
+   435→        const tpl = data.templates?.[0]
+   436→        setParameters(
+   437→          tpl?.items?.filter((it: ParamItem) => it.data_type === 'number') ?? [],
+   438→        )
+   439→      } catch {
+   440→        if (!cancelled) setParameters([])
+   441→      } finally {
+   442→        if (!cancelled) setParamLoading(false)
+   443→      }
+   444→    })()
+   445→    return () => { cancelled = true }
+   446→  }, [categoryId])
+   447→
+   448→  /* ── 3. 参数选定后防抖查询 ── */
+   449→  const fetchAnalysis = useCallback(async () => {
+   450→    if (!paramAId || !paramBId) return
+   451→    abortRef.current?.abort()
+   452→    const ctrl = new AbortController()
+   453→    abortRef.current = ctrl
+   454→
+   455→    setLoading(true)
+   456→    setError(null)
+   457→    try {
+   458→      const qs = new URLSearchParams({ paramA_id: paramAId, paramB_id: paramBId })
+   459→      if (categoryId) qs.set('category_id', categoryId)
+   460→      if (equipmentId) qs.set('equipment_id', equipmentId)
+   461→
+   462→      const res = await fetch(`/api/analysis/param-comparison?${qs}`, { signal: ctrl.signal })
+   463→      if (!res.ok) {
+   464→        const body = await res.json().catch(() => ({}))
+   465→        throw new Error((body as Record<string, string>).error ?? `查询失败 (${res.status})`)
+   466→      }
+   467→      setResult(await res.json())
+   468→    } catch (e) {
+   469→      if (e instanceof DOMException && e.name === 'AbortError') return
+   470→      setError(e instanceof Error ? e.message : '查询失败')
+   471→      setResult(null)
+   472→    } finally {
+   473→      setLoading(false)
+   474→    }
+   475→  }, [paramAId, paramBId, categoryId, equipmentId])
+   476→
+   477→  useEffect(() => {
+   478→    if (!paramAId || !paramBId) { setResult(null); return }
+   479→    const t = setTimeout(fetchAnalysis, 500)
+   480→    return () => clearTimeout(t)
+   481→  }, [fetchAnalysis])
+   482→
+   483→  /* ── derived ── */
+   484→  const paramADetail = useMemo(() => parameters.find(p => p.id === paramAId), [parameters, paramAId])
+   485→  const paramBDetail = useMemo(() => parameters.find(p => p.id === paramBId), [parameters, paramBId])
+   486→  const paramBOptions = useMemo(() => paramAId ? parameters.filter(p => p.id !== paramAId) : parameters, [parameters, paramAId])
+   487→  const catsWithTpl = useMemo(() => categories.filter(c => c.template), [categories])
+   488→
+   489→  const qualified = useMemo(() => result?.dataPoints.filter(d => d.isQualified) ?? [], [result])
+   490→  const unqualified = useMemo(() => result?.dataPoints.filter(d => !d.isQualified) ?? [], [result])
+   491→  const statsA = useMemo(() => result?.dataPoints.length ? calcStats(result.dataPoints.map(d => d.valueA)) : null, [result])
+   492→  const statsB = useMemo(() => result?.dataPoints.length ? calcStats(result.dataPoints.map(d => d.valueB)) : null, [result])
+   493→  const corrInfo = useMemo(() => result?.correlation != null ? getCorrelationInfo(result.correlation) : null, [result])
+   494→
+   495→  /* ── handlers ── */
+   496→  const onCategoryChange = (v: string) => setCategoryId(v)
+   497→  const onParamAChange = (v: string) => { setParamAId(v); if (v === paramBId) setParamBId('') }
+   498→  const onParamBChange = (v: string) => { setParamBId(v); if (v === paramAId) setParamAId('') }
+   499→  const onEquipmentChange = (v: string) => setEquipmentId(v === 'all' ? '' : v)
+   500→
+   501→  /* ── render ── */
+   502→  const hasData = !loading && !error && result && result.dataPoints.length > 0
+   503→  const isEmpty = !loading && !error && result && result.dataPoints.length === 0
+   504→  const showHint = !paramAId && !paramBId && !loading && !error && !result
+   505→
+   506→  return (
+   507→    <div className="space-y-6">
+   508→      <PageHeader
+   509→        title="配合参数分析"
+   510→        description="选择两个检测参数，分析其相关性、分布特征和统计指标"
+   511→      />
+   512→
+   513→      {/* ── 参数选择器 ── */}
+   514→      <Card>
+   515→        <CardContent className="pt-6">
+   516→          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+   517→            {/* 类别 */}
+   518→            <div className="space-y-1.5">
+   519→              <Label className="text-xs text-muted-foreground">零件类别</Label>
+   520→              <Select value={categoryId} onValueChange={onCategoryChange} disabled={initLoading}>
+   521→                <SelectTrigger className="w-full">
+   522→                  <SelectValue placeholder={initLoading ? '加载中...' : '选择类别'} />
+   523→                </SelectTrigger>
+   524→                <SelectContent>
+   525→                  {catsWithTpl.length === 0 && !initLoading && (
+   526→                    <SelectItem value="__none" disabled>暂无已配置模板的类别</SelectItem>
+   527→                  )}
+   528→                  {catsWithTpl.map(c => (
+   529→                    <SelectItem key={c.id} value={c.id}>
+   530→                      <span className="font-mono text-xs text-muted-foreground">{c.code}</span>{' '}
+   531→                      {c.name}
+   532→                      <span className="ml-1 text-xs text-muted-foreground">({c.part_count}件)</span>
+   533→                    </SelectItem>
+   534→                  ))}
+   535→                </SelectContent>
+   536→              </Select>
+   537→            </div>
+   538→
+   539→            {/* 参数 A */}
+   540→            <div className="space-y-1.5">
+   541→              <Label className="text-xs text-muted-foreground">参数 A（X 轴）</Label>
+   542→              <Select value={paramAId} onValueChange={onParamAChange} disabled={!categoryId || paramLoading}>
+   543→                <SelectTrigger className="w-full">
+   544→                  <SelectValue
+   545→                    placeholder={paramLoading ? '加载中...' : !categoryId ? '请先选类别' : '选择参数 A'}
+   546→                  />
+   547→                </SelectTrigger>
+   548→                <SelectContent>
+   549→                  {parameters.length === 0 && !paramLoading && (
+   550→                    <SelectItem value="__none" disabled>该类别无数值型参数</SelectItem>
+   551→                  )}
+   552→                  {parameters.map(p => (
+   553→                    <SelectItem key={p.id} value={p.id} disabled={p.id === paramBId}>
+   554→                      <span className="font-mono text-xs text-muted-foreground">{p.param_code}</span>{' '}
+   555→                      {p.param_name}
+   556→                    </SelectItem>
+   557→                  ))}
+   558→                </SelectContent>
+   559→              </Select>
+   560→            </div>
+   561→
+   562→            {/* 参数 B */}
+   563→            <div className="space-y-1.5">
+   564→              <Label className="text-xs text-muted-foreground">参数 B（Y 轴）</Label>
+   565→              <Select value={paramBId} onValueChange={onParamBChange} disabled={!categoryId || paramLoading}>
+   566→                <SelectTrigger className="w-full">
+   567→                  <SelectValue
+   568→                    placeholder={paramLoading ? '加载中...' : !categoryId ? '请先选类别' : '选择参数 B'}
+   569→                  />
+   570→                </SelectTrigger>
+   571→                <SelectContent>
+   572→                  {paramBOptions.length === 0 && !paramLoading && (
+   573→                    <SelectItem value="__none" disabled>{paramAId ? '无可选参数' : '请先选类别'}</SelectItem>
+   574→                  )}
+   575→                  {paramBOptions.map(p => (
+   576→                    <SelectItem key={p.id} value={p.id}>
+   577→                      <span className="font-mono text-xs text-muted-foreground">{p.param_code}</span>{' '}
+   578→                      {p.param_name}
+   579→                    </SelectItem>
+   580→                  ))}
+   581→                </SelectContent>
+   582→              </Select>
+   583→            </div>
+   584→
+   585→            {/* 设备（可选） */}
+   586→            <div className="space-y-1.5">
+   587→              <Label className="text-xs text-muted-foreground">设备筛选（可选）</Label>
+   588→              <Select value={equipmentId || 'all'} onValueChange={onEquipmentChange} disabled={initLoading}>
+   589→                <SelectTrigger className="w-full">
+   590→                  <SelectValue placeholder="全部设备" />
+   591→                </SelectTrigger>
+   592→                <SelectContent>
+   593→                  <SelectItem value="all">全部设备</SelectItem>
+   594→                  {equipment.map(eq => (
+   595→                    <SelectItem key={eq.id} value={eq.id}>
+   596→                      {eq.machine_no}{' '}
+   597→                      <span className="text-xs text-muted-foreground">{eq.model}</span>
+   598→                    </SelectItem>
+   599→                  ))}
+   600→                </SelectContent>
+   601→              </Select>
+   602→            </div>
+   603→          </div>
+   604→        </CardContent>
+   605→      </Card>
+   606→
+   607→      {/* ── 空提示 ── */}
+   608→      {showHint && (
+   609→        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
+   610→          <ArrowRightLeft className="h-8 w-8 opacity-40" />
+   611→          <p>请选择零件类别和两个检测参数开始分析</p>
+   612→          <p className="text-xs">选定两个参数后将自动进行相关性分析</p>
+   613→        </div>
+   614→      )}
+   615→
+   616→      {/* ── 加载态 ── */}
+   617→      {loading && <LoadingSkeleton />}
+   618→
+   619→      {/* ── 错误态 ── */}
+   620→      {!loading && error && (
+   621→        <EmptyState
+   622→          title="分析查询失败"
+   623→          description={error}
+   624→          action={{ label: '重试', onClick: fetchAnalysis }}
+   625→        />
+   626→      )}
+   627→
+   628→      {/* ── 无匹配数据 ── */}
+   629→      {isEmpty && (
+   630→        <EmptyState
+   631→          title="无匹配数据"
+   632→          description="所选参数组合在当前筛选条件下没有检测数据，请尝试更换参数或调整筛选条件"
+   633→        />
+   634→      )}
+   635→
+   636→      {/* ── 分析结果 ── */}
+   637→      {hasData && (
+   638→        <div className="space-y-6">
+   639→          {/* 散点图 + 相关系数 */}
+   640→          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+   641→            {/* 散点图 */}
+   642→            <Card className="lg:col-span-2">
+   643→              <CardHeader className="pb-2">
+   644→                <CardTitle className="text-base">
+   645→                  散点图 — {result.paramA.param_name} vs {result.paramB.param_name}
+   646→                </CardTitle>
+   647→                <CardDescription>
+   648→                  <span className="inline-flex items-center gap-1">
+   649→                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />合格
+   650→                  </span>
+   651→                  <span className="mx-2 text-border">|</span>
+   652→                  <span className="inline-flex items-center gap-1">
+   653→                    <span className="inline-block h-2 w-2 rounded-full bg-red-500" />不合格
+   654→                  </span>
+   655→                  <span className="mx-2 text-border">|</span>
+   656→                  共 {result.dataPoints.length} 个样本
+   657→                </CardDescription>
+   658→              </CardHeader>
+   659→              <CardContent>
+   660→                <ResponsiveContainer width="100%" height={380}>
+   661→                  <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 10 }}>
+   662→                    <CartesianGrid strokeDasharray="3 3" />
+   663→                    <XAxis
+   664→                      type="number"
+   665→                      dataKey="valueA"
+   666→                      tick={{ fontSize: 11 }}
+   667→                      label={{
+   668→                        value: `${result.paramA.param_name}${result.paramA.unit ? ` (${result.paramA.unit})` : ''}`,
+   669→                        position: 'insideBottom',
+   670→                        offset: -15,
+   671→                        style: { fontSize: 12 },
+   672→                      }}
+   673→                    />
+   674→                    <YAxis
+   675→                      type="number"
+   676→                      dataKey="valueB"
+   677→                      tick={{ fontSize: 11 }}
+   678→                      label={{
+   679→                        value: `${result.paramB.param_name}${result.paramB.unit ? ` (${result.paramB.unit})` : ''}`,
+   680→                        angle: -90,
+   681→                        position: 'insideLeft',
+   682→                        offset: 15,
+   683→                        style: { fontSize: 12 },
+   684→                      }}
+   685→                    />
+   686→                    <Tooltip
+   687→                      content={
+   688→                        <ScatterTooltip
+   689→                          nameA={result.paramA.param_name}
+   690→                          unitA={result.paramA.unit}
+   691→                          nameB={result.paramB.param_name}
+   692→                          unitB={result.paramB.unit}
+   693→                        />
+   694→                      }
+   695→                    />
+   696→                    <Legend wrapperStyle={{ fontSize: 12 }} />
+   697→                    <Scatter name="合格" data={qualified} fill="#22c55e" opacity={0.8} />
+   698→                    <Scatter name="不合格" data={unqualified} fill="#ef4444" opacity={0.8} />
+   699→                  </ScatterChart>
+   700→                </ResponsiveContainer>
+   701→              </CardContent>
+   702→            </Card>
+   703→
+   704→            {/* 相关系数卡片 */}
+   705→            <Card className={corrInfo ? `border ${corrInfo.bg}` : undefined}>
+   706→              <CardHeader className="pb-2">
+   707→                <CardTitle className="text-base">皮尔逊相关系数</CardTitle>
+   708→                <CardDescription>衡量两参数线性相关程度</CardDescription>
+   709→              </CardHeader>
+   710→              <CardContent className="flex flex-col items-center gap-3">
+   711→                <div className="text-center">
+   712→                  <div className={`text-5xl font-bold tracking-tight ${corrInfo?.color ?? 'text-foreground'}`}>
+   713→                    {result.correlation != null ? result.correlation.toFixed(4) : 'N/A'}
+   714→                  </div>
+   715→                  <div className="mt-2">
+   716→                    <Badge className={corrInfo?.badge ?? ''} variant="secondary">
+   717→                      {corrInfo?.label ?? '无数据'}
+   718→                    </Badge>
+   719→                  </div>
+   720→                </div>
+   721→
+   722→                <div className="mt-2 w-full space-y-2.5 text-sm text-muted-foreground">
+   723→                  {[
+   724→                    ['样本数量', String(result.dataPoints.length), 'text-foreground'],
+   725→                    ['合格样本', String(qualified.length), 'text-emerald-600'],
+   726→                    ['不合格样本', String(unqualified.length), 'text-red-600'],
+   727→                    [
+   728→                      '合格率',
+   729→                      result.dataPoints.length
+   730→                        ? `${((qualified.length / result.dataPoints.length) * 100).toFixed(1)}%`
+   731→                        : 'N/A',
+   732→                      'text-foreground',
+   733→                    ],
+   734→                  ].map(([label, value, color]) => (
+   735→                    <div key={label} className="flex justify-between">
+   736→                      <span>{label}</span>
+   737→                      <span className={`font-medium ${color}`}>{value}</span>
+   738→                    </div>
+   739→                  ))}
+   740→                </div>
+   741→
+   742→                <div className="mt-1 w-full rounded-lg bg-background/60 p-3 text-xs text-muted-foreground">
+   743→                  {corrInfo?.label === '无明显相关'
+   744→                    ? '两个参数之间没有明显的线性相关关系，变化相互独立。'
+   745→                    : `两个参数之间存在${corrInfo?.label}关系，${Math.abs(result.correlation ?? 0) >= 0.8 ? '具有较强的线性关联。' : '存在一定的线性趋势。'}`}
+   746→                </div>
+   747→              </CardContent>
+   748→            </Card>
+   749→          </div>
+   750→
+   751→          {/* 直方图 */}
+   752→          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+   753→            <HistogramCard
+   754→              title={result.paramA.param_name}
+   755→              unit={result.paramA.unit}
+   756→              param={paramADetail}
+   757→              distribution={result.distributionA}
+   758→            />
+   759→            <HistogramCard
+   760→              title={result.paramB.param_name}
+   761→              unit={result.paramB.unit}
+   762→              param={paramBDetail}
+   763→              distribution={result.distributionB}
+   764→            />
+   765→          </div>
+   766→
+   767→          {/* 统计摘要 */}
+   768→          {(statsA || statsB) && (
+   769→            <Card>
+   770→              <CardHeader className="pb-2">
+   771→                <CardTitle className="text-base">统计摘要</CardTitle>
+   772→                <CardDescription>样本均值与标准差（均值 ± 标准差）</CardDescription>
+   773→              </CardHeader>
+   774→              <CardContent>
+   775→                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+   776→                  <div className="rounded-lg bg-muted/50 p-4 text-center">
+   777→                    <p className="text-xs text-muted-foreground">样本数量</p>
+   778→                    <p className="mt-1 text-2xl font-bold">{statsA?.n ?? 0}</p>
+   779→                  </div>
+   780→                  <div className="rounded-lg bg-muted/50 p-4 text-center">
+   781→                    <p className="text-xs text-muted-foreground">
+   782→                      {result.paramA.param_name}
+   783→                      {result.paramA.unit ? ` (${result.paramA.unit})` : ''}
+   784→                    </p>
+   785→                    <p className="mt-1 text-2xl font-bold">
+   786→                      {statsA ? `${statsA.mean.toFixed(2)} ± ${statsA.std.toFixed(2)}` : 'N/A'}
+   787→                    </p>
+   788→                    <p className="mt-0.5 text-xs text-muted-foreground">均值 ± 标准差</p>
+   789→                  </div>
+   790→                  <div className="rounded-lg bg-muted/50 p-4 text-center">
+   791→                    <p className="text-xs text-muted-foreground">
+   792→                      {result.paramB.param_name}
+   793→                      {result.paramB.unit ? ` (${result.paramB.unit})` : ''}
+   794→                    </p>
+   795→                    <p className="mt-1 text-2xl font-bold">
+   796→                      {statsB ? `${statsB.mean.toFixed(2)} ± ${statsB.std.toFixed(2)}` : 'N/A'}
+   797→                    </p>
+   798→                    <p className="mt-0.5 text-xs text-muted-foreground">均值 ± 标准差</p>
+   799→                  </div>
+   800→                </div>
+   801→              </CardContent>
+   802→            </Card>
+   803→          )}
+   804→        </div>
+   805→      )}
+   806→    </div>
+   807→  )
+   808→}

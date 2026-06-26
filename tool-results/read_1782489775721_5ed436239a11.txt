@@ -1,0 +1,751 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useMemo, useCallback } from 'react'
+     4→import {
+     5→  Puzzle,
+     6→  Plus,
+     7→  Pencil,
+     8→  Trash2,
+     9→  Clock,
+    10→  Wrench,
+    11→  Package,
+    12→  AlertCircle,
+    13→  Tag,
+    14→  FileCheck2,
+    15→  Cog,
+    16→  Building2,
+    17→  CalendarDays,
+    18→} from 'lucide-react'
+    19→import { Card, CardContent } from '@/components/ui/card'
+    20→import { Button } from '@/components/ui/button'
+    21→import {
+    22→  Table,
+    23→  TableBody,
+    24→  TableCell,
+    25→  TableHead,
+    26→  TableHeader,
+    27→  TableRow,
+    28→} from '@/components/ui/table'
+    29→import {
+    30→  Dialog,
+    31→  DialogContent,
+    32→  DialogHeader,
+    33→  DialogTitle,
+    34→  DialogDescription,
+    35→} from '@/components/ui/dialog'
+    36→import { Badge } from '@/components/ui/badge'
+    37→import { ScrollArea } from '@/components/ui/scroll-area'
+    38→import { Separator } from '@/components/ui/separator'
+    39→import { Skeleton } from '@/components/ui/skeleton'
+    40→import { PageHeader } from '@/components/common/PageHeader'
+    41→import { StatCard } from '@/components/common/StatCard'
+    42→import { StatusBadge } from '@/components/common/StatusBadge'
+    43→import { FilterBar, type FilterItem } from '@/components/common/FilterBar'
+    44→import { EmptyState } from '@/components/common/EmptyState'
+    45→import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+    46→import { PartForm, type PartPayload } from '@/components/parts/PartForm'
+    47→import { cn } from '@/lib/utils'
+    48→
+    49→// ============================
+    50→// Types
+    51→// ============================
+    52→
+    53→interface Part {
+    54→  id: string
+    55→  code: string
+    56→  name: string
+    57→  category_id: string
+    58→  category_name: string
+    59→  category_code: string
+    60→  specification: string | null
+    61→  material: string | null
+    62→  supplier: string | null
+    63→  equipment_id: string | null
+    64→  equipment_machine_no: string | null
+    65→  equipment_model: string | null
+    66→  install_date: string | null
+    67→  working_hours: number
+    68→  status: string
+    69→  remark: string | null
+    70→  data_item_count: number
+    71→}
+    72→
+    73→interface InspectionRecord {
+    74→  id: string
+    75→  record_no: string
+    76→  inspector: string
+    77→  batch_no: string | null
+    78→  inspection_date: string
+    79→  overall_result: string
+    80→  remark: string | null
+    81→  qualified_count: number
+    82→  total_count: number
+    83→  qualified_rate: number
+    84→}
+    85→
+    86→// ============================
+    87→// Constants
+    88→// ============================
+    89→
+    90→const STATUS_FILTER_OPTIONS = [
+    91→  { label: '在用', value: '在用' },
+    92→  { label: '维修中', value: '维修中' },
+    93→  { label: '退役', value: '退役' },
+    94→  { label: '库存', value: '库存' },
+    95→]
+    96→
+    97→// ============================
+    98→// Component
+    99→// ============================
+   100→
+   101→export default function PartView() {
+   102→  // ---- Data state ----
+   103→  const [parts, setParts] = useState<Part[]>([])
+   104→  const [loading, setLoading] = useState(true)
+   105→  const [error, setError] = useState<string | null>(null)
+   106→  const [filters, setFilters] = useState<Record<string, string>>({})
+   107→
+   108→  // ---- Dropdown data for filter ----
+   109→  const [categoryOptions, setCategoryOptions] = useState<{ label: string; value: string }[]>([])
+   110→
+   111→  // ---- Dialogs ----
+   112→  const [formOpen, setFormOpen] = useState(false)
+   113→  const [editTarget, setEditTarget] = useState<Part | null>(null)
+   114→  const [detailTarget, setDetailTarget] = useState<Part | null>(null)
+   115→  const [detailOpen, setDetailOpen] = useState(false)
+   116→  const [deleteTarget, setDeleteTarget] = useState<Part | null>(null)
+   117→  const [deleteOpen, setDeleteOpen] = useState(false)
+   118→  const [deleting, setDeleting] = useState(false)
+   119→
+   120→  // ---- Detail: inspection history ----
+   121→  const [inspections, setInspections] = useState<InspectionRecord[]>([])
+   122→  const [inspectionsLoading, setInspectionsLoading] = useState(false)
+   123→
+   124→  // ---- Action feedback ----
+   125→  const [actionError, setActionError] = useState<string | null>(null)
+   126→
+   127→  // =====================
+   128→  // Filter config (depends on categoryOptions)
+   129→  // =====================
+   130→  const filterConfig: FilterItem[] = useMemo(
+   131→    () => [
+   132→      {
+   133→        key: 'keyword',
+   134→        label: '关键词',
+   135→        type: 'input' as const,
+   136→        placeholder: '搜索编号、名称、规格…',
+   137→      },
+   138→      {
+   139→        key: 'category_id',
+   140→        label: '类别',
+   141→        type: 'select' as const,
+   142→        options: categoryOptions,
+   143→      },
+   144→      {
+   145→        key: 'status',
+   146→        label: '状态',
+   147→        type: 'select' as const,
+   148→        options: STATUS_FILTER_OPTIONS,
+   149→      },
+   150→    ],
+   151→    [categoryOptions],
+   152→  )
+   153→
+   154→  // =====================
+   155→  // Fetch parts
+   156→  // =====================
+   157→  const fetchParts = useCallback(
+   158→    async (filterValues?: Record<string, string>) => {
+   159→      try {
+   160→        setLoading(true)
+   161→        setError(null)
+   162→        const params = new URLSearchParams()
+   163→        const f = filterValues ?? filters
+   164→        if (f.keyword) params.set('keyword', f.keyword)
+   165→        if (f.category_id) params.set('category_id', f.category_id)
+   166→        if (f.status) params.set('status', f.status)
+   167→        const qs = params.toString()
+   168→        const url = `/api/parts${qs ? `?${qs}` : ''}`
+   169→        const res = await fetch(url)
+   170→        if (!res.ok) {
+   171→          const body = await res.json().catch(() => ({}))
+   172→          throw new Error(body.error || `HTTP ${res.status}`)
+   173→        }
+   174→        const json = await res.json()
+   175→        setParts(json.parts ?? [])
+   176→      } catch (err) {
+   177→        setError(err instanceof Error ? err.message : '未知错误')
+   178→      } finally {
+   179→        setLoading(false)
+   180→      }
+   181→    },
+   182→    [filters],
+   183→  )
+   184→
+   185→  // =====================
+   186→  // Fetch categories for filter dropdown
+   187→  // =====================
+   188→  useEffect(() => {
+   189→    async function fetchCategories() {
+   190→      try {
+   191→        const res = await fetch('/api/categories')
+   192→        const json = await res.json()
+   193→        setCategoryOptions(
+   194→          (json.categories ?? []).map((c: { id: string; name: string; code: string }) => ({
+   195→            label: `${c.code} ${c.name}`,
+   196→            value: c.id,
+   197→          })),
+   198→        )
+   199→      } catch {
+   200→        // ignore
+   201→      }
+   202→    }
+   203→    fetchCategories()
+   204→  }, [])
+   205→
+   206→  // Initial load
+   207→  useEffect(() => {
+   208→    fetchParts()
+   209→  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+   210→
+   211→  // =====================
+   212→  // Fetch inspection history for detail
+   213→  // =====================
+   214→  const fetchInspections = useCallback(async (partId: string) => {
+   215→    try {
+   216→      setInspectionsLoading(true)
+   217→      // Get all data items for this part, grouped by record
+   218→      const res = await fetch(`/api/parts?keyword=${partId}`)
+   219→      // We need a dedicated endpoint — use a workaround: fetch categories to get the part's data_item_count
+   220→      // Actually, for inspection history we'll query the inspection_data_items aggregated
+   221→      // For now, use a simpler approach: fetch all records that have data items for this part
+   222→      const recordsRes = await fetch('/api/inspection-records')
+   223→      if (!recordsRes.ok) throw new Error()
+   224→
+   225→      // Since we don't have a dedicated inspection-records API yet,
+   226→      // we'll use the data_items count from the part itself and show a simplified view.
+   227→      // For a full implementation, we'd need /api/parts/[id]/inspections
+   228→      setInspections([])
+   229→    } catch {
+   230→      setInspections([])
+   231→    } finally {
+   232→      setInspectionsLoading(false)
+   233→    }
+   234→  }, [])
+   235→
+   236→  // =====================
+   237→  // Stats
+   238→  // =====================
+   239→  const stats = useMemo(() => {
+   240→    const total = parts.length
+   241→    const inUse = parts.filter((p) => p.status === '在用').length
+   242→    const repairing = parts.filter((p) => p.status === '维修中').length
+   243→    const retired = parts.filter((p) => p.status === '退役').length
+   244→    const inStock = parts.filter((p) => p.status === '库存').length
+   245→    return { total, inUse, repairing, retired, inStock }
+   246→  }, [parts])
+   247→
+   248→  // =====================
+   249→  // Handlers
+   250→  // =====================
+   251→  const handleSearch = useCallback(
+   252→    (values: Record<string, string>) => {
+   253→      setFilters(values)
+   254→      fetchParts(values)
+   255→    },
+   256→    [fetchParts],
+   257→  )
+   258→
+   259→  const handleReset = useCallback(() => {
+   260→    setFilters({})
+   261→    fetchParts({})
+   262→  }, [fetchParts])
+   263→
+   264→  const handleCreate = useCallback(() => {
+   265→    setEditTarget(null)
+   266→    setActionError(null)
+   267→    setFormOpen(true)
+   268→  }, [])
+   269→
+   270→  const handleEdit = useCallback((p: Part, e: React.MouseEvent) => {
+   271→    e.stopPropagation()
+   272→    setEditTarget(p)
+   273→    setActionError(null)
+   274→    setFormOpen(true)
+   275→  }, [])
+   276→
+   277→  const handleFormSubmit = useCallback(
+   278→    async (payload: PartPayload & { id?: string }) => {
+   279→      const method = payload.id ? 'PUT' : 'POST'
+   280→      const res = await fetch('/api/parts', {
+   281→        method,
+   282→        headers: { 'Content-Type': 'application/json' },
+   283→        body: JSON.stringify(payload),
+   284→      })
+   285→      if (!res.ok) {
+   286→        const body = await res.json().catch(() => ({}))
+   287→        throw new Error(body.error || `请求失败 (${res.status})`)
+   288→      }
+   289→      await fetchParts()
+   290→    },
+   291→    [fetchParts],
+   292→  )
+   293→
+   294→  const handleDetail = useCallback((p: Part) => {
+   295→    setDetailTarget(p)
+   296→    setDetailOpen(true)
+   297→    setInspections([])
+   298→    fetchInspections(p.id)
+   299→  }, [fetchInspections])
+   300→
+   301→  const handleDeleteClick = useCallback((p: Part, e: React.MouseEvent) => {
+   302→    e.stopPropagation()
+   303→    setDeleteTarget(p)
+   304→    setDeleteOpen(true)
+   305→  }, [])
+   306→
+   307→  const handleDeleteConfirm = useCallback(async () => {
+   308→    if (!deleteTarget) return
+   309→    try {
+   310→      setDeleting(true)
+   311→      const res = await fetch(`/api/parts?id=${deleteTarget.id}`, {
+   312→        method: 'DELETE',
+   313→      })
+   314→      if (!res.ok) {
+   315→        const body = await res.json().catch(() => ({}))
+   316→        throw new Error(body.error || `删除失败 (${res.status})`)
+   317→      }
+   318→      setDeleteOpen(false)
+   319→      setDeleteTarget(null)
+   320→      await fetchParts()
+   321→    } catch (err) {
+   322→      setActionError(err instanceof Error ? err.message : '删除失败')
+   323→    } finally {
+   324→      setDeleting(false)
+   325→    }
+   326→  }, [deleteTarget, fetchParts])
+   327→
+   328→  // =====================
+   329→  // Loading skeleton
+   330→  // =====================
+   331→  if (loading) {
+   332→    return (
+   333→      <div className="space-y-6 p-6">
+   334→        <div className="flex items-center justify-between">
+   335→          <div className="space-y-2">
+   336→            <Skeleton className="h-8 w-48" />
+   337→            <Skeleton className="h-4 w-72" />
+   338→          </div>
+   339→          <Skeleton className="h-9 w-28" />
+   340→        </div>
+   341→        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+   342→          {Array.from({ length: 5 }).map((_, i) => (
+   343→            <Skeleton key={i} className="h-24 rounded-lg" />
+   344→          ))}
+   345→        </div>
+   346→        <Skeleton className="h-12 rounded-lg" />
+   347→        {Array.from({ length: 5 }).map((_, i) => (
+   348→          <Skeleton key={i} className="h-14 rounded-lg" />
+   349→        ))}
+   350→      </div>
+   351→    )
+   352→  }
+   353→
+   354→  // =====================
+   355→  // Error state
+   356→  // =====================
+   357→  if (error) {
+   358→    return (
+   359→      <div className="space-y-6 p-6">
+   360→        <PageHeader title="零件档案管理" description="实现一件一档，管理零部件基础信息和检测历史" />
+   361→        <EmptyState
+   362→          icon={AlertCircle}
+   363→          title="数据加载失败"
+   364→          description={`请求出错：${error}`}
+   365→          action={{ label: '重新加载', onClick: () => fetchParts() }}
+   366→        />
+   367→      </div>
+   368→    )
+   369→  }
+   370→
+   371→  // =====================
+   372→  // Main render
+   373→  // =====================
+   374→  return (
+   375→    <div className="space-y-6 p-6">
+   376→      {/* ====== Page Header ====== */}
+   377→      <PageHeader
+   378→        title="零件档案管理"
+   379→        description="实现一件一档，管理零部件基础信息、所属设备和检测历史"
+   380→        actions={
+   381→          <Button onClick={handleCreate} className="gap-1.5">
+   382→            <Plus className="h-4 w-4" />
+   383→            新建零件
+   384→          </Button>
+   385→        }
+   386→      />
+   387→
+   388→      {/* ====== Stat Cards ====== */}
+   389→      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+   390→        <StatCard
+   391→          title="零件总数"
+   392→          value={stats.total}
+   393→          icon={Puzzle}
+   394→          description="已登记零件"
+   395→        />
+   396→        <StatCard
+   397→          title="在用"
+   398→          value={stats.inUse}
+   399→          icon={Wrench}
+   400→          description="正常运行"
+   401→          className="border-l-4 border-l-emerald-500"
+   402→        />
+   403→        <StatCard
+   404→          title="维修中"
+   405→          value={stats.repairing}
+   406→          icon={Wrench}
+   407→          description="维修保养"
+   408→          className="border-l-4 border-l-orange-500"
+   409→        />
+   410→        <StatCard
+   411→          title="退役"
+   412→          value={stats.retired}
+   413→          icon={AlertCircle}
+   414→          description="已停用"
+   415→          className="border-l-4 border-l-slate-400"
+   416→        />
+   417→        <StatCard
+   418→          title="库存"
+   419→          value={stats.inStock}
+   420→          icon={Package}
+   421→          description="待分配"
+   422→          className="border-l-4 border-l-blue-500"
+   423→        />
+   424→      </div>
+   425→
+   426→      {/* ====== Filter Bar ====== */}
+   427→      <FilterBar
+   428→        filters={filterConfig}
+   429→        onSearch={handleSearch}
+   430→        onReset={handleReset}
+   431→      />
+   432→
+   433→      {/* ====== Action Error ====== */}
+   434→      {actionError && (
+   435→        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+   436→          <AlertCircle className="h-4 w-4 shrink-0" />
+   437→          {actionError}
+   438→          <button
+   439→            className="ml-auto text-destructive/60 hover:text-destructive"
+   440→            onClick={() => setActionError(null)}
+   441→          >
+   442→            {'\u2715'}
+   443→          </button>
+   444→        </div>
+   445→      )}
+   446→
+   447→      {/* ====== Parts Table ====== */}
+   448→      {parts.length === 0 ? (
+   449→        <EmptyState
+   450→          icon={Puzzle}
+   451→          title="暂无零件记录"
+   452→          description={'请点击"新建零件"按钮添加第一个零件档案。'}
+   453→          action={{ label: '新建零件', onClick: handleCreate }}
+   454→        />
+   455→      ) : (
+   456→        <Card>
+   457→          <CardContent className="p-0">
+   458→            <Table>
+   459→              <TableHeader>
+   460→                <TableRow className="hover:bg-transparent">
+   461→                  <TableHead className="w-16 pl-4">序号</TableHead>
+   462→                  <TableHead>编号</TableHead>
+   463→                  <TableHead>名称</TableHead>
+   464→                  <TableHead>类别</TableHead>
+   465→                  <TableHead className="hidden md:table-cell">规格</TableHead>
+   466→                  <TableHead className="hidden lg:table-cell">材质</TableHead>
+   467→                  <TableHead className="hidden xl:table-cell">供应商</TableHead>
+   468→                  <TableHead className="hidden sm:table-cell">关联设备</TableHead>
+   469→                  <TableHead className="text-center">状态</TableHead>
+   470→                  <TableHead className="text-center hidden lg:table-cell">检测数据</TableHead>
+   471→                  <TableHead className="w-28 pr-4 text-center">操作</TableHead>
+   472→                </TableRow>
+   473→              </TableHeader>
+   474→              <TableBody>
+   475→                {parts.map((p, idx) => (
+   476→                  <TableRow
+   477→                    key={p.id}
+   478→                    className="cursor-pointer group"
+   479→                    onClick={() => handleDetail(p)}
+   480→                  >
+   481→                    <TableCell className="pl-4 text-muted-foreground">
+   482→                      {idx + 1}
+   483→                    </TableCell>
+   484→                    <TableCell>
+   485→                      <span className="font-mono text-sm font-semibold">{p.code}</span>
+   486→                    </TableCell>
+   487→                    <TableCell className="font-medium">{p.name}</TableCell>
+   488→                    <TableCell>
+   489→                      <Badge variant="outline" className="text-xs">
+   490→                        <span className="font-mono mr-1">{p.category_code}</span>
+   491→                        {p.category_name}
+   492→                      </Badge>
+   493→                    </TableCell>
+   494→                    <TableCell className="hidden max-w-[100px] truncate text-sm text-muted-foreground md:table-cell">
+   495→                      {p.specification ?? '—'}
+   496→                    </TableCell>
+   497→                    <TableCell className="hidden max-w-[80px] truncate text-sm text-muted-foreground lg:table-cell">
+   498→                      {p.material ?? '—'}
+   499→                    </TableCell>
+   500→                    <TableCell className="hidden max-w-[100px] truncate text-sm text-muted-foreground xl:table-cell">
+   501→                      {p.supplier ?? '—'}
+   502→                    </TableCell>
+   503→                    <TableCell className="hidden sm:table-cell">
+   504→                      {p.equipment_machine_no ? (
+   505→                        <span className="text-sm">
+   506→                          <span className="font-mono text-muted-foreground">{p.equipment_machine_no}</span>
+   507→                        </span>
+   508→                      ) : (
+   509→                        <span className="text-xs text-muted-foreground">—</span>
+   510→                      )}
+   511→                    </TableCell>
+   512→                    <TableCell className="text-center">
+   513→                      <StatusBadge status={p.status} />
+   514→                    </TableCell>
+   515→                    <TableCell className="text-center hidden lg:table-cell">
+   516→                      <span
+   517→                        className={cn(
+   518→                          'inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs font-semibold',
+   519→                          p.data_item_count > 0
+   520→                            ? 'bg-primary/10 text-primary'
+   521→                            : 'bg-muted text-muted-foreground',
+   522→                        )}
+   523→                      >
+   524→                        {p.data_item_count}
+   525→                      </span>
+   526→                    </TableCell>
+   527→                    <TableCell className="pr-4">
+   528→                      <div className="flex items-center justify-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+   529→                        <Button
+   530→                          variant="ghost"
+   531→                          size="icon"
+   532→                          className="h-7 w-7"
+   533→                          onClick={(e) => handleEdit(p, e)}
+   534→                          title="编辑"
+   535→                        >
+   536→                          <Pencil className="h-3.5 w-3.5" />
+   537→                        </Button>
+   538→                        <Button
+   539→                          variant="ghost"
+   540→                          size="icon"
+   541→                          className="h-7 w-7 text-destructive hover:text-destructive"
+   542→                          onClick={(e) => handleDeleteClick(p, e)}
+   543→                          title="删除"
+   544→                        >
+   545→                          <Trash2 className="h-3.5 w-3.5" />
+   546→                        </Button>
+   547→                      </div>
+   548→                    </TableCell>
+   549→                  </TableRow>
+   550→                ))}
+   551→              </TableBody>
+   552→            </Table>
+   553→          </CardContent>
+   554→        </Card>
+   555→      )}
+   556→
+   557→      {/* ====== Part Detail Dialog ====== */}
+   558→      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+   559→        <DialogContent className="max-h-[88vh] sm:max-w-2xl">
+   560→          {detailTarget && (
+   561→            <>
+   562→              <DialogHeader>
+   563→                <div className="flex items-center gap-2">
+   564→                  <DialogTitle className="flex items-center gap-2">
+   565→                    <Puzzle className="h-5 w-5 text-primary" />
+   566→                    <span className="font-mono">{detailTarget.code}</span>
+   567→                    <span className="font-normal">— {detailTarget.name}</span>
+   568→                  </DialogTitle>
+   569→                  <StatusBadge status={detailTarget.status} />
+   570→                </div>
+   571→                <DialogDescription>
+   572→                  <Badge variant="outline" className="mr-2 text-xs font-mono">
+   573→                    {detailTarget.category_code}
+   574→                  </Badge>
+   575→                  {detailTarget.category_name}
+   576→                </DialogDescription>
+   577→              </DialogHeader>
+   578→
+   579→              {/* Basic info grid */}
+   580→              <div className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-3">
+   581→                <InfoItem icon={Cog} label="规格" value={detailTarget.specification} />
+   582→                <InfoItem icon={Building2} label="材质" value={detailTarget.material} />
+   583→                <InfoItem icon={Tag} label="供应商" value={detailTarget.supplier} />
+   584→                <InfoItem
+   585→                  icon={Package}
+   586→                  label="关联设备"
+   587→                  value={
+   588→                    detailTarget.equipment_machine_no
+   589→                      ? `${detailTarget.equipment_machine_no} (${detailTarget.equipment_model})`
+   590→                      : null
+   591→                  }
+   592→                />
+   593→                <InfoItem
+   594→                  icon={CalendarDays}
+   595→                  label="安装日期"
+   596→                  value={detailTarget.install_date}
+   597→                />
+   598→                <InfoItem
+   599→                  icon={Clock}
+   600→                  label="累计工时"
+   601→                  value={
+   602→                    detailTarget.working_hours > 0
+   603→                      ? `${detailTarget.working_hours.toLocaleString()} h`
+   604→                      : null
+   605→                  }
+   606→                />
+   607→                <InfoItem
+   608→                  icon={FileCheck2}
+   609→                  label="检测数据条数"
+   610→                  value={`${detailTarget.data_item_count} 条`}
+   611→                />
+   612→              </div>
+   613→
+   614→              {/* Remark */}
+   615→              {detailTarget.remark && (
+   616→                <div className="text-sm">
+   617→                  <span className="font-medium text-muted-foreground">备注：</span>
+   618→                  {detailTarget.remark}
+   619→                </div>
+   620→              )}
+   621→
+   622→              <Separator />
+   623→
+   624→              {/* Inspection History placeholder */}
+   625→              <div>
+   626→                <div className="mb-3 flex items-center gap-2">
+   627→                  <FileCheck2 className="h-4 w-4 text-muted-foreground" />
+   628→                  <span className="text-sm font-semibold">历史检测记录</span>
+   629→                  <Badge variant="secondary" className="text-xs">
+   630→                    {detailTarget.data_item_count}
+   631→                  </Badge>
+   632→                </div>
+   633→
+   634→                {inspectionsLoading ? (
+   635→                  <div className="space-y-2">
+   636→                    {Array.from({ length: 3 }).map((_, i) => (
+   637→                      <Skeleton key={i} className="h-10 rounded" />
+   638→                    ))}
+   639→                  </div>
+   640→                ) : (
+   641→                  <div className="rounded-lg border border-dashed bg-muted/20 py-8 text-center">
+   642→                    <FileCheck2 className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
+   643→                    <p className="text-sm text-muted-foreground">
+   644→                      检测记录将在「检测台账」模块完成后自动关联显示
+   645→                    </p>
+   646→                    <p className="mt-1 text-xs text-muted-foreground/70">
+   647→                      当前零件共有 {detailTarget.data_item_count} 条检测数据
+   648→                    </p>
+   649→                  </div>
+   650→                )}
+   651→              </div>
+   652→
+   653→              {/* Detail footer */}
+   654→              <div className="flex justify-end gap-2 pt-1">
+   655→                <Button
+   656→                  variant="outline"
+   657→                  size="sm"
+   658→                  className="gap-1.5"
+   659→                  onClick={() => {
+   660→                    setDetailOpen(false)
+   661→                    setEditTarget(detailTarget)
+   662→                    setFormOpen(true)
+   663→                  }}
+   664→                >
+   665→                  <Pencil className="h-3.5 w-3.5" />
+   666→                  编辑
+   667→                </Button>
+   668→                <Button
+   669→                  variant="outline"
+   670→                  size="sm"
+   671→                  className="gap-1.5"
+   672→                  onClick={() => {
+   673→                    setDetailOpen(false)
+   674→                    setDeleteTarget(detailTarget)
+   675→                    setDeleteOpen(true)
+   676→                  }}
+   677→                >
+   678→                  <Trash2 className="h-3.5 w-3.5" />
+   679→                  删除
+   680→                </Button>
+   681→              </div>
+   682→            </>
+   683→          )}
+   684→        </DialogContent>
+   685→      </Dialog>
+   686→
+   687→      {/* ====== Form Dialog ====== */}
+   688→      <PartForm
+   689→        open={formOpen}
+   690→        onOpenChange={setFormOpen}
+   691→        editData={
+   692→          editTarget
+   693→            ? {
+   694→                id: editTarget.id,
+   695→                code: editTarget.code,
+   696→                name: editTarget.name,
+   697→                category_id: editTarget.category_id,
+   698→                specification: editTarget.specification,
+   699→                material: editTarget.material,
+   700→                supplier: editTarget.supplier,
+   701→                equipment_id: editTarget.equipment_id,
+   702→                install_date: editTarget.install_date,
+   703→                working_hours: editTarget.working_hours,
+   704→                status: editTarget.status,
+   705→                remark: editTarget.remark,
+   706→              }
+   707→            : null
+   708→        }
+   709→        onSubmit={handleFormSubmit}
+   710→      />
+   711→
+   712→      {/* ====== Delete Confirm ====== */}
+   713→      <ConfirmDialog
+   714→        open={deleteOpen}
+   715→        onOpenChange={setDeleteOpen}
+   716→        title="确认删除零件"
+   717→        description={
+   718→          deleteTarget
+   719→            ? `确定要删除零件 "${deleteTarget.code}"（${deleteTarget.name}）吗？该零件有 ${deleteTarget.data_item_count} 条检测数据，删除后不可撤销。`
+   720→            : ''
+   721→        }
+   722→        onConfirm={handleDeleteConfirm}
+   723→        variant="destructive"
+   724→      />
+   725→    </div>
+   726→  )
+   727→}
+   728→
+   729→// ============================
+   730→// InfoItem sub-component
+   731→// ============================
+   732→
+   733→function InfoItem({
+   734→  icon: Icon,
+   735→  label,
+   736→  value,
+   737→}: {
+   738→  icon: React.ElementType
+   739→  label: string
+   740→  value: string | null | undefined
+   741→}) {
+   742→  return (
+   743→    <div className="flex items-start gap-2">
+   744→      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+   745→      <div className="min-w-0">
+   746→        <p className="text-xs text-muted-foreground">{label}</p>
+   747→        <p className="truncate font-medium">{value ?? '—'}</p>
+   748→      </div>
+   749→    </div>
+   750→  )
+   751→}
