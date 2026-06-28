@@ -1,12 +1,12 @@
 import { auth } from '@/lib/auth'
 
-const PUBLIC_PATHS = ['/login', '/api/auth']
+const PUBLIC_PATHS = ['/login', '/api/auth', '/_next', '/favicon.ico']
 const ADMIN_PATHS = ['/api/users']
 
 export default auth((req) => {
   const { pathname } = req.nextUrl
 
-  // 公开路由放行
+  // 公开路由放行（包括静态资源、auth 回调、登录页）
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return
 
   const role = (req.auth?.user as { role?: string })?.role

@@ -4,7 +4,12 @@ import { PrismaAdapter } from '@auth/prisma-adapter'
 import bcrypt from 'bcryptjs'
 import { db } from '@/lib/db'
 
+const PROD_BASE_URL = 'https://rock-drill-data-platform-production.up.railway.app'
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // 强制指定 baseUrl，绕过 Railway 反向代理导致的 Host 解析错误
+  baseUrl: PROD_BASE_URL,
+  trustHost: true,
   adapter: PrismaAdapter(db),
   providers: [
     Credentials({
