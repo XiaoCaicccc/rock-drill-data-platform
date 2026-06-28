@@ -39,6 +39,8 @@ COPY --from=builder /app/.next/standalone ./
 # Copy static assets
 COPY --from=builder /app/.next/standalone/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone/public ./public
+# Copy prisma schema for db push in Console
+COPY --from=builder /app/prisma ./prisma
 
 USER nextjs
 
