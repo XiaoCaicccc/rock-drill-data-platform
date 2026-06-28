@@ -231,7 +231,7 @@ export function UserManagement() {
       <PageHeader
         title="用户管理"
         description="管理系统用户账号、角色和权限"
-        action={
+        actions={
           <Button onClick={() => setCreateOpen(true)} size="sm">
             <Plus className="mr-1.5 size-4" />
             新建用户
