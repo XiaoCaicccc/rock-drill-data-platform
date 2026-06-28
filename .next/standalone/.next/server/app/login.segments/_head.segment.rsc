@@ -1,6 +1,0 @@
-1:"$Sreact.fragment"
-2:I[97367,["/_next/static/chunks/77d2792b7dba5e63.js"],"ViewportBoundary"]
-3:I[97367,["/_next/static/chunks/77d2792b7dba5e63.js"],"MetadataBoundary"]
-4:"$Sreact.suspense"
-5:I[27201,["/_next/static/chunks/77d2792b7dba5e63.js"],"IconMark"]
-0:{"buildId":"VuazVUqfD3g7cCqViFiwu","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]}],["$","div",null,{"hidden":true,"children":["$","$L3",null,{"children":["$","$4",null,{"name":"Next.Metadata","children":[["$","title","0",{"children":"凿岩机全生命周期数据分析平台"}],["$","meta","1",{"name":"description","content":"凿岩机零部件全生命周期数据分析与部门助理平台 — 数据分析师工作台"}],["$","link","2",{"rel":"icon","href":"https://z-cdn.chatglm.cn/z-ai/static/logo.svg"}],["$","$L5","3",{}]]}]}]}],["$","meta",null,{"name":"next-size-adjust","content":""}]]}],"loading":null,"isPartial":false}
