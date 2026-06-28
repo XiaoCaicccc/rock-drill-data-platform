@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
-    "build": "DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder npx prisma generate && DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder next build",
-    "start": "next start",
+    "build": "prisma generate && next build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public",
+    "start": "node .next/standalone/server.js",
     "lint": "eslint .",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
