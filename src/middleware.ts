@@ -13,6 +13,9 @@ export default auth((req) => {
 
   // 未登录 → 重定向登录页
   if (!req.auth) {
+    if (pathname.startsWith('/api/')) {
+      return Response.json({ error: '未登录' }, { status: 401 })
+    }
     const loginUrl = new URL('/login', req.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
     return Response.redirect(loginUrl)
@@ -20,6 +23,9 @@ export default auth((req) => {
 
   // 管理员路由 → 非 admin 重定向首页
   if (ADMIN_PATHS.some((p) => pathname.startsWith(p)) && role !== 'admin') {
+    if (pathname.startsWith('/api/')) {
+      return Response.json({ error: '需要管理员权限' }, { status: 403 })
+    }
     const homeUrl = new URL('/', req.url)
     homeUrl.searchParams.set('forbidden', '1')
     return Response.redirect(homeUrl)

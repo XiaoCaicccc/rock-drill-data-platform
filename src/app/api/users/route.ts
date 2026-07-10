@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { requireAdmin } from '@/lib/check-admin'
 import { db } from '@/lib/db'
+import { validatePasswordStrength } from '@/lib/password'
+
+const VALID_ROLES = ['admin', 'quality_manager', 'inspector', 'engineer', 'viewer'] as const
 
 // ─── GET: 用户列表 ───
 
@@ -36,9 +39,11 @@ export async function POST(request: NextRequest) {
   if (!email || !password || !name || !role) {
     return NextResponse.json({ error: '缺少必填字段' }, { status: 400 })
   }
-  if (!['admin', 'user'].includes(role)) {
+  if (!VALID_ROLES.includes(role)) {
     return NextResponse.json({ error: '角色无效' }, { status: 400 })
   }
+  const passwordError = validatePasswordStrength(password)
+  if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 })
 
   const existing = await db.user.findUnique({ where: { email } })
   if (existing) {
@@ -67,7 +72,7 @@ export async function PUT(request: NextRequest) {
   if (!id) {
     return NextResponse.json({ error: '缺少用户 ID' }, { status: 400 })
   }
-  if (role && !['admin', 'user'].includes(role)) {
+  if (role && !VALID_ROLES.includes(role)) {
     return NextResponse.json({ error: '角色无效' }, { status: 400 })
   }
 

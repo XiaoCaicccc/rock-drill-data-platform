@@ -7,23 +7,37 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  admin
+  quality_manager
+  inspector
+  engineer
+  viewer
+}
+
 // ============================================================
 // ⓪ user — 用户
 // ============================================================
 
 model user {
-  id         String   @id @default(cuid())
-  email      String   @unique
-  password   String
-  name       String
-  role       String   @default("user")
-  active     Boolean  @default(true)
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  password              String
+  name                  String
+  role                  UserRole @default(inspector)
+  organization_id       String?
+  active                Boolean  @default(true)
+  failed_login_attempts Int      @default(0)
+  locked_until          DateTime?
+  mfa_enabled           Boolean  @default(false)
+  mfa_secret            String?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
 
   inspection_records inspection_record[]
   analysis_reports   analysis_report[]
   tasks              task[]
+  audit_logs         AuditLog[]
 
   @@map("user")
 }
@@ -44,11 +58,13 @@ model equipment {
   remark              String?
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
+  created_by          String?
 
   parts               part[]
   inspection_records  inspection_record[]
 
   @@map("equipment")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -61,11 +77,13 @@ model part_category {
   code                 String  @unique
   description          String?
   standard_param_count Int     @default(40)
+  created_by           String?
 
   parts                part[]
   parameter_template   parameter_template?
 
   @@map("part_category")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -85,12 +103,14 @@ model part {
   working_hours Float   @default(0)
   status        String  @default("在用")
   remark        String?
+  created_by    String?
 
   category      part_category @relation(fields: [category_id], references: [id])
   equipment     equipment?    @relation(fields: [equipment_id], references: [id])
   data_items    inspection_data_item[]
 
   @@map("part")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -102,11 +122,13 @@ model parameter_template {
   category_id String  @unique
   name        String
   version     Int     @default(1)
+  created_by  String?
 
   category    part_category   @relation(fields: [category_id], references: [id])
   items       parameter_item[]
 
   @@map("parameter_template")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -241,10 +263,12 @@ model meeting {
   status          String   @default("待召开")
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
+  created_by      String?
 
   resolutions meeting_resolution[]
 
   @@map("meeting")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -272,12 +296,17 @@ model document {
   id                String   @id @default(cuid())
   title             String
   category          String
-  file_path         String?
+  storage_key       String?
+  original_name     String?
+  file_size         Int?
+  mime_type         String?
   related_report_id String?
+  created_by        String?
   archived          Boolean  @default(false)
   created_at        DateTime @default(now())
 
   @@map("document")
+  @@index([created_by])
 }
 
 // ============================================================
@@ -290,6 +319,27 @@ model attendance_record {
   member_name String
   status      String
   remark      String?
+  created_by  String?
 
   @@map("attendance_record")
+  @@index([created_by])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user user @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@map("audit_log")
 }
