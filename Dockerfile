@@ -36,11 +36,9 @@ RUN adduser --system --uid 1001 nextjs
 
 # Copy standalone output
 COPY --from=builder /app/.next/standalone ./
-# standalone 追踪不会包含未被 Web 服务直接导入的 Prisma CLI，
-# 这里保留它以便在 Railway Console 中执行迁移和种子命令。
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+# standalone 追踪不会包含 Prisma CLI。保留完整依赖目录，
+# 以便在 Railway Console 中执行迁移和种子命令。
+COPY --from=builder /app/node_modules ./node_modules
 # Copy static assets
 COPY --from=builder /app/.next/standalone/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone/public ./public
