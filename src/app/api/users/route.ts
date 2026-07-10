@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs'
 import { requireAdmin } from '@/lib/check-admin'
 import { db } from '@/lib/db'
 import { validatePasswordStrength } from '@/lib/password'
+import { logAudit } from '@/lib/audit'
+import { auth } from '@/lib/auth'
 
 const VALID_ROLES = ['admin', 'quality_manager', 'inspector', 'engineer', 'viewer'] as const
 
@@ -57,6 +59,10 @@ export async function POST(request: NextRequest) {
     select: { id: true, email: true, name: true, role: true, active: true, created_at: true },
   })
 
+  const session = await auth()
+  const actorId = (session?.user as { id?: string })?.id
+  if (actorId) await logAudit({ userId: actorId, action: 'CREATE', entityType: 'user', entityId: user.id, after: { email: user.email, role: user.role }, request })
+
   return NextResponse.json({ user }, { status: 201 })
 }
 
@@ -81,6 +87,10 @@ export async function PUT(request: NextRequest) {
     data: { ...(name !== undefined && { name }), ...(role !== undefined && { role }), ...(active !== undefined && { active }) },
     select: { id: true, email: true, name: true, role: true, active: true, created_at: true },
   })
+
+  const session = await auth()
+  const actorId = (session?.user as { id?: string })?.id
+  if (actorId) await logAudit({ userId: actorId, action: 'UPDATE', entityType: 'user', entityId: user.id, after: { name: user.name, role: user.role, active: user.active }, request })
 
   return NextResponse.json({ user })
 }

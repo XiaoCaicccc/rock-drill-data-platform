@@ -174,7 +174,7 @@ export default function ReportView() {
     setFormSaving(true)
     setActionError('')
     try {
-      const body = { ...form }
+      const body: typeof form & { id?: string } = { ...form }
       let res: Response
 
       if (editingId) {

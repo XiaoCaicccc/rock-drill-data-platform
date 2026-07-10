@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { requireAuth } from '@/lib/permissions'
 
 // ─── 核心查询逻辑（导出供 /api/export 复用） ───
 
-export async function getDashboardData() {
+async function getDashboardData() {
   const now = new Date()
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
@@ -129,7 +130,7 @@ export async function getDashboardData() {
   ])
 
   // ─── 计算合格率辅助函数 ───
-  const calcRate = (items: { is_qualified: boolean; _count: { is_qualified: number } }[]) => {
+  const calcRate = (items: { is_qualified: boolean | null; _count: { is_qualified: number } }[]) => {
     const total = items.reduce((s, i) => s + i._count.is_qualified, 0)
     const qualified = items
       .filter(i => i.is_qualified)
@@ -201,6 +202,8 @@ export async function getDashboardData() {
 }
 
 export async function GET() {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   try {
     const data = await getDashboardData()
     return NextResponse.json(data)

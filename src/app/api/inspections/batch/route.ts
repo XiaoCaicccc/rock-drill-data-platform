@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ============================================================
 // POST — batch create inspection_record + inspection_data_items
@@ -15,8 +17,9 @@ interface BatchItem {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth()
-    const userId = (session?.user as { id?: string })?.id
+    const access = await requireRole(['admin', 'quality_manager', 'engineer', 'inspector'])
+    if (access instanceof Response) return access
+    const userId = access.user.id
 
     const body = await request.json()
     const { record, items } = body as {
@@ -97,11 +100,6 @@ export async function POST(request: NextRequest) {
     // --- Generate record_no: JC-YYYYMMDD-NNN ---
     const dateStr = record.inspection_date.slice(0, 10).replace(/-/g, '')
     const prefix = `JC-${dateStr}-`
-    const existingCount = await db.inspection_record.count({
-      where: { record_no: { startsWith: prefix } },
-    })
-    const recordNo = `${prefix}${String(existingCount + 1).padStart(3, '0')}`
-
     // --- Compute is_qualified / is_optimal per item ---
     const processedItems = items.map((item: BatchItem) => {
       const paramDef = paramItemMap.get(item.param_item_id)!
@@ -146,24 +144,36 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Create record + items (createMany) ---
-    const inspectionRecord = await db.inspection_record.create({
-      data: {
-        record_no: recordNo,
-        equipment_id: record.equipment_id || null,
-        inspector: record.inspector.trim(),
-        batch_no: record.batch_no?.trim() || null,
-        inspection_date: new Date(record.inspection_date),
-        overall_result,
-        remark: record.remark?.trim() || null,
-        user_id: userId,
-        data_items: {
-          createMany: {
-            data: processedItems,
-          },
-        },
-      },
-      include: { data_items: true },
-    })
+    // SERIALIZABLE 会让并发的“当日编号 + 1”其中一个事务重试，避免唯一键冲突。
+    let inspectionRecord: Awaited<ReturnType<typeof db.inspection_record.create>> | null = null
+    let recordNo = ''
+    for (let attempt = 0; attempt < 3 && !inspectionRecord; attempt++) {
+      try {
+        inspectionRecord = await db.$transaction(async (tx) => {
+          const existingCount = await tx.inspection_record.count({ where: { record_no: { startsWith: prefix } } })
+          recordNo = `${prefix}${String(existingCount + 1).padStart(3, '0')}`
+          return tx.inspection_record.create({
+            data: {
+              record_no: recordNo,
+              equipment_id: record.equipment_id || null,
+              inspector: record.inspector.trim(),
+              batch_no: record.batch_no?.trim() || null,
+              inspection_date: new Date(record.inspection_date),
+              overall_result,
+              remark: record.remark?.trim() || null,
+              user_id: userId,
+              data_items: { createMany: { data: processedItems } },
+            },
+            include: { data_items: true },
+          })
+        }, { isolationLevel: 'Serializable' })
+      } catch (error) {
+        if (attempt === 2) throw error
+      }
+    }
+    if (!inspectionRecord) throw new Error('无法生成检测记录编号')
+
+    await logAudit({ userId, action: 'CREATE', entityType: 'inspection_record', entityId: inspectionRecord.id, after: { record_no: recordNo, item_count: processedItems.length }, request })
 
     return NextResponse.json(
       {

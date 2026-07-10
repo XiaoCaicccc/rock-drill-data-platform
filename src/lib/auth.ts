@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // Railway 反向代理下必须信任 Host；本地和生产均从环境变量取回调地址。
-  baseUrl: process.env.NEXTAUTH_URL,
+  ...({ baseUrl: process.env.NEXTAUTH_URL } as object),
   trustHost: true,
   adapter: PrismaAdapter(db),
   providers: [

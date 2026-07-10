@@ -10,7 +10,7 @@ export async function POST() {
 
   const totp = new OTPAuth.TOTP({
     issuer: '凿岩机数据平台',
-    label: access.user.email ?? access.user.id,
+    label: access.user.id,
     algorithm: 'SHA1',
     digits: 6,
     period: 30,

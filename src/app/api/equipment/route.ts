@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ============================================================
 // Types
@@ -28,11 +30,13 @@ interface EquipmentRow {
 
 export async function GET(request: NextRequest) {
   try {
+    const access = await requireAuth()
+    if (access instanceof Response) return access
     const { searchParams } = request.nextUrl
     const keyword = searchParams.get('keyword')?.trim() ?? ''
     const status = searchParams.get('status')?.trim() ?? ''
 
-    const where: Prisma.equipmentWhereInput = {}
+    const where: Prisma.equipmentWhereInput = applyDataScope(access, {})
 
     if (keyword) {
       where.OR = [
@@ -90,6 +94,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const {
       machine_no,
@@ -126,10 +132,12 @@ export async function POST(request: NextRequest) {
       current_location: current_location?.trim() ?? null,
       total_working_hours: total_working_hours ?? 0,
       remark: remark?.trim() ?? null,
+      created_by: access.user.id,
     }
 
     const created = await db.equipment.create({ data })
 
+    await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'equipment', entityId: created.id, after: { machine_no: created.machine_no }, request })
     return NextResponse.json({ equipment: created }, { status: 201 })
   } catch (error) {
     console.error('[POST /api/equipment]', error)
@@ -143,12 +151,18 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const { id, ...fields } = body
 
     if (!id) {
       return NextResponse.json({ error: '缺少设备 ID' }, { status: 400 })
     }
+    const current = await db.equipment.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '设备不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     const data: Prisma.equipmentUpdateInput = {}
 
@@ -203,6 +217,7 @@ export async function PUT(request: NextRequest) {
       data,
     })
 
+    await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'equipment', entityId: id, before: { machine_no: current.machine_no, status: current.status }, after: { machine_no: updated.machine_no, status: updated.status }, request })
     return NextResponse.json({ equipment: updated })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
@@ -219,12 +234,18 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const { searchParams } = request.nextUrl
     const id = searchParams.get('id')
 
     if (!id) {
       return NextResponse.json({ error: '缺少设备 ID' }, { status: 400 })
     }
+    const current = await db.equipment.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '设备不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     // Check for related parts
     const partCount = await db.part.count({ where: { equipment_id: id } })
@@ -236,6 +257,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await db.equipment.delete({ where: { id } })
+    await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'equipment', entityId: id, before: { machine_no: current.machine_no }, request })
 
     return NextResponse.json({ success: true })
   } catch (error) {

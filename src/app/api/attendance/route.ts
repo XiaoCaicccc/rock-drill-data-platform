@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ─── GET: 考勤记录（按月份） ───
 
 export async function GET(request: NextRequest) {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   const { searchParams } = new URL(request.url)
   const year = parseInt(searchParams.get('year') || new Date().getFullYear().toString(), 10)
   const month = parseInt(searchParams.get('month') || (new Date().getMonth() + 1).toString(), 10)
@@ -12,9 +16,9 @@ export async function GET(request: NextRequest) {
   const endDate = new Date(year, month, 0, 23, 59, 59, 999)
 
   const records = await db.attendance_record.findMany({
-    where: {
+    where: applyDataScope(access, {
       date: { gte: startDate, lte: endDate },
-    },
+    }),
     orderBy: [{ member_name: 'asc' }, { date: 'asc' }],
   })
 
@@ -45,6 +49,8 @@ export async function GET(request: NextRequest) {
 // ─── POST: 批量创建/更新考勤记录 ───
 
 export async function POST(request: NextRequest) {
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
   const body = await request.json()
   const { records } = body as { records: { date: string; member_name: string; status: string; remark?: string }[] }
 
@@ -52,7 +58,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '考勤记录不能为空' }, { status: 400 })
   }
 
-  const results = []
+  const results: Array<{ id: string; status: string }> = []
   for (const rec of records) {
     if (!rec.date || !rec.member_name || !rec.status) continue
 
@@ -65,11 +71,14 @@ export async function POST(request: NextRequest) {
     })
 
     if (existing) {
+      const ownership = await requireOwnershipOrAdmin(existing.created_by)
+      if (ownership instanceof Response) return ownership
       const updated = await db.attendance_record.update({
         where: { id: existing.id },
         data: {
           status: rec.status,
           remark: rec.remark || null,
+          created_by: access.user.id,
         },
       })
       results.push(updated)
@@ -86,12 +95,15 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  await Promise.all(results.map(record => logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'attendance_record', entityId: record.id, after: { status: record.status }, request })))
   return NextResponse.json({ records: results }, { status: 201 })
 }
 
 // ─── PUT: 更新单条考勤 ───
 
 export async function PUT(request: NextRequest) {
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
   const body = await request.json()
   const { id, status, remark } = body
 
@@ -103,6 +115,8 @@ export async function PUT(request: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: '考勤记录不存在' }, { status: 404 })
   }
+  const ownership = await requireOwnershipOrAdmin(existing.created_by)
+  if (ownership instanceof Response) return ownership
 
   const data: Record<string, unknown> = {}
   if (status !== undefined) data.status = status
@@ -110,5 +124,6 @@ export async function PUT(request: NextRequest) {
 
   const updated = await db.attendance_record.update({ where: { id }, data })
 
+  await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'attendance_record', entityId: id, before: { status: existing.status }, after: { status: updated.status }, request })
   return NextResponse.json({ record: updated })
 }

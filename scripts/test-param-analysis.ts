@@ -46,7 +46,11 @@ function histogram(values: number[]) {
 
 let pass = 0
 let fail = 0
-const ok = (cond: boolean, msg: string) => { console.log(cond ? `  ✅ ${msg}` : `  ❌ ${msg}`); cond ? pass++ : fail++ }
+const ok = (cond: boolean, msg: string) => {
+  console.log(cond ? `  ✅ ${msg}` : `  ❌ ${msg}`)
+  if (cond) pass++
+  else fail++
+}
 
 async function main() {
   // ── 1. 类别 + 模板 ──

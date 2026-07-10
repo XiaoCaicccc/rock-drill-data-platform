@@ -247,10 +247,10 @@ function HistogramCard({
   const refLine = (value: number | null) =>
     value != null ? valueToBinIndex(value, bins) : null
 
-  const stdMin = refLine(param?.standard_min)
-  const stdMax = refLine(param?.standard_max)
-  const optMin = refLine(param?.optimal_min)
-  const optMax = refLine(param?.optimal_max)
+  const stdMin = refLine(param?.standard_min ?? null)
+  const stdMax = refLine(param?.standard_max ?? null)
+  const optMin = refLine(param?.optimal_min ?? null)
+  const optMax = refLine(param?.optimal_max ?? null)
   const hasStd = stdMin != null || stdMax != null
   const hasOpt = optMin != null || optMax != null
 
@@ -277,7 +277,9 @@ function HistogramCard({
               domain={[-0.5, 9.5]}
               ticks={bins.map((_, i) => i)}
               tickFormatter={(i: number) => bins[i]?.lo.toFixed(1) ?? ''}
-              tick={{ fontSize: 9, angle: -45, textAnchor: 'end' }}
+              tick={{ fontSize: 9, textAnchor: 'end' }}
+              angle={-45}
+              textAnchor="end"
               interval={0}
               height={50}
             />

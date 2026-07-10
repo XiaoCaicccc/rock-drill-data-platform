@@ -1,24 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ─── GET: 分析报告列表（按角色过滤） ───
 
 export async function GET(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
-
-  const userId = (session.user as { id?: string }).id
-  const role = (session.user as { role?: string }).role
+  const access = await requireAuth()
+  if (access instanceof Response) return access
 
   const { searchParams } = new URL(request.url)
   const keyword = searchParams.get('keyword') || ''
   const type = searchParams.get('type') || ''
   const status = searchParams.get('status') || ''
 
-  const where: any = {}
+  const where: any = applyDataScope(access, {}, 'user_id')
   if (keyword) {
     where.OR = [
       { title: { contains: keyword, mode: 'insensitive' } },
@@ -27,10 +24,6 @@ export async function GET(request: NextRequest) {
   }
   if (type) where.type = type
   if (status) where.status = status
-  // 普通用户只能看自己创建的报告
-  if (role !== 'admin' && userId) {
-    where.user_id = userId
-  }
 
   const reports = await db.analysis_report.findMany({
     where,
@@ -43,12 +36,8 @@ export async function GET(request: NextRequest) {
 // ─── POST: 创建报告（自动关联当前用户） ───
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
-
-  const userId = (session.user as { id?: string }).id
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
   const body = await request.json()
   const { title, type, period, summary, conclusion, author } = body
 
@@ -65,10 +54,11 @@ export async function POST(request: NextRequest) {
       summary: summary || null,
       conclusion: conclusion || null,
       author: author || '',
-      user_id: userId,
+      user_id: access.user.id,
     },
   })
 
+  await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'analysis_report', entityId: report.id, after: { report_no: report.report_no, title: report.title }, request })
   return NextResponse.json({ report }, { status: 201 })
 }
 
@@ -81,10 +71,8 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 }
 
 export async function PUT(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
 
   const body = await request.json()
   const { id, title, type, period, summary, conclusion, author, status } = body
@@ -97,6 +85,8 @@ export async function PUT(request: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: '报告不存在' }, { status: 404 })
   }
+  const ownership = await requireOwnershipOrAdmin(existing.user_id)
+  if (ownership instanceof Response) return ownership
 
   // 状态流转校验
   if (status && status !== existing.status) {
@@ -123,16 +113,15 @@ export async function PUT(request: NextRequest) {
     data,
   })
 
+  await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'analysis_report', entityId: id, before: { status: existing.status, title: existing.title }, after: { status: updated.status, title: updated.title }, request })
   return NextResponse.json({ report: updated })
 }
 
 // ─── DELETE: 删除报告（仅草稿可删） ───
 
 export async function DELETE(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user) {
-    return NextResponse.json({ error: '未登录' }, { status: 401 })
-  }
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
 
   const id = request.nextUrl.searchParams.get('id')
   if (!id) {
@@ -143,6 +132,8 @@ export async function DELETE(request: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: '报告不存在' }, { status: 404 })
   }
+  const ownership = await requireOwnershipOrAdmin(existing.user_id)
+  if (ownership instanceof Response) return ownership
   if (existing.status !== '草稿') {
     return NextResponse.json(
       { error: `仅草稿状态可删除，当前状态为"${existing.status}"` },
@@ -151,5 +142,6 @@ export async function DELETE(request: NextRequest) {
   }
 
   await db.analysis_report.delete({ where: { id } })
+  await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
   return NextResponse.json({ success: true })
 }

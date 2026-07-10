@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireAuth } from '@/lib/permissions'
 
 export interface CategoryTemplateItem {
   id: string
@@ -32,6 +33,8 @@ export interface CategoryWithStats {
 }
 
 export async function GET() {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   try {
     const categories = await db.part_category.findMany({
       include: {

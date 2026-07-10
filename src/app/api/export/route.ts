@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { format } from 'date-fns'
+import { requireAuth } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ─── CSV 工具 ───
 
@@ -22,15 +24,21 @@ function todayStamp(): string {
 // ─── GET: 数据导出 ───
 
 export async function GET(request: NextRequest) {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   const { searchParams } = new URL(request.url)
   const type = searchParams.get('type') || ''
 
   try {
     if (type === 'inspections') {
-      return await exportInspections(searchParams)
+      const response = await exportInspections(searchParams)
+      await logAudit({ userId: access.user.id, action: 'EXPORT', entityType: 'inspection_record', entityId: 'bulk', request, metadata: { type } })
+      return response
     }
     if (type === 'dashboard') {
-      return await exportDashboard()
+      const response = await exportDashboard()
+      await logAudit({ userId: access.user.id, action: 'EXPORT', entityType: 'dashboard', entityId: 'current', request, metadata: { type } })
+      return response
     }
     return NextResponse.json({ error: '无效的导出类型，支持 inspections / dashboard' }, { status: 400 })
   } catch (e) {
@@ -64,19 +72,21 @@ async function exportInspections(params: URLSearchParams) {
     '批次号', '整体结果', '数据项数', '创建时间',
   ])
 
-  const rows = records.map((r: Record<string, unknown>) =>
-    csvRow([
+  const rows = records.map((r: Record<string, unknown>) => {
+    const equipment = r.equipment as { machine_no?: string; model?: string } | null | undefined
+    const counts = r._count as { data_items?: number } | null | undefined
+    return csvRow([
       r.record_no,
-      r.equipment?.machine_no ?? '',
-      r.equipment?.model ?? '',
+      equipment?.machine_no ?? '',
+      equipment?.model ?? '',
       r.inspector,
       r.inspection_date ? format(new Date(r.inspection_date as string), 'yyyy-MM-dd') : '',
       r.batch_no ?? '',
       r.overall_result ?? '',
-      r._count?.data_items ?? 0,
+      counts?.data_items ?? 0,
       r.created_at ? format(new Date(r.created_at as string), 'yyyy-MM-dd HH:mm') : '',
-    ]),
-  )
+    ])
+  })
 
   const csv = '\uFEFF' + header + rows.join('')
   const filename = `检测台账_${todayStamp()}.csv`

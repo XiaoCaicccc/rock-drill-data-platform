@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Search, RotateCcw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -31,8 +31,7 @@ export interface FilterBarProps {
 
 export function FilterBar({ filters, onSearch, onReset, className }: FilterBarProps) {
   // Initialize state for each filter
-  const initState: Record<string, string> = {}
-  for (const f of filters) initState[f.key] = ''
+  const initState = useMemo(() => Object.fromEntries(filters.map((filter) => [filter.key, ''])) as Record<string, string>, [filters])
   const [values, setValues] = useState<Record<string, string>>(initState)
 
   const handleChange = useCallback((key: string, value: string) => {
@@ -51,7 +50,7 @@ export function FilterBar({ filters, onSearch, onReset, className }: FilterBarPr
   const handleReset = useCallback(() => {
     setValues(initState)
     onReset()
-  }, [onReset])
+  }, [initState, onReset])
 
   return (
     <div className={cn('flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4', className)}>

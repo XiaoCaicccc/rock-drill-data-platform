@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireAuth, requireOwnershipOrAdmin } from '@/lib/permissions'
 
 // ─── GET: 单条检测记录完整明细 ───
 
@@ -7,6 +8,8 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   const { id } = await params
 
   const record = await db.inspection_record.findUnique({
@@ -42,6 +45,8 @@ export async function GET(
   if (!record) {
     return NextResponse.json({ error: '检测记录不存在' }, { status: 404 })
   }
+  const ownership = await requireOwnershipOrAdmin(record.user_id)
+  if (ownership instanceof Response) return ownership
 
   return NextResponse.json({ record })
 }

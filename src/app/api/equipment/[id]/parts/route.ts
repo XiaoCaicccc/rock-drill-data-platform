@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { applyDataScope, requireAuth } from '@/lib/permissions'
 
 interface EquipmentPart {
   id: string
@@ -21,10 +22,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const access = await requireAuth()
+    if (access instanceof Response) return access
     const { id } = await params
 
     const parts = await db.part.findMany({
-      where: { equipment_id: id },
+      where: applyDataScope(access, { equipment_id: id }),
       include: {
         category: {
           select: { name: true, code: true },

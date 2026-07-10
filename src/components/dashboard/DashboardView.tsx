@@ -128,7 +128,7 @@ export default function DashboardView() {
         <EmptyState
           icon={Activity}
           title="加载失败"
-          description={error}
+          description={error ?? undefined}
           action={{ label: '重新加载', onClick: fetchDashboard }}
         />
       </div>

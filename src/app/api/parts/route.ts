@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ============================================================
 // GET — list parts with filters
@@ -8,12 +10,14 @@ import { Prisma } from '@prisma/client'
 
 export async function GET(request: NextRequest) {
   try {
+    const access = await requireAuth()
+    if (access instanceof Response) return access
     const { searchParams } = request.nextUrl
     const keyword = searchParams.get('keyword')?.trim() ?? ''
     const status = searchParams.get('status')?.trim() ?? ''
     const category_id = searchParams.get('category_id')?.trim() ?? ''
 
-    const where: Prisma.partWhereInput = {}
+    const where: Prisma.partWhereInput = applyDataScope(access, {})
 
     if (keyword) {
       where.OR = [
@@ -79,6 +83,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const { code, name, category_id, specification, material, supplier, equipment_id, install_date, status, remark } = body
 
@@ -124,9 +130,11 @@ export async function POST(request: NextRequest) {
         install_date: install_date ? new Date(install_date) : null,
         status: status ?? '在用',
         remark: remark?.trim() ?? null,
+        created_by: access.user.id,
       },
     })
 
+    await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'part', entityId: created.id, after: { code: created.code }, request })
     return NextResponse.json({ part: created }, { status: 201 })
   } catch (error) {
     console.error('[POST /api/parts]', error)
@@ -140,12 +148,18 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const { id, ...fields } = body
 
     if (!id) {
       return NextResponse.json({ error: '缺少零件 ID' }, { status: 400 })
     }
+    const current = await db.part.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '零件不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     const data: Prisma.partUpdateInput = {}
 
@@ -215,6 +229,7 @@ export async function PUT(request: NextRequest) {
 
     const updated = await db.part.update({ where: { id }, data })
 
+    await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'part', entityId: id, before: { code: current.code, status: current.status }, after: { code: updated.code, status: updated.status }, request })
     return NextResponse.json({ part: updated })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
@@ -231,12 +246,18 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const { searchParams } = request.nextUrl
     const id = searchParams.get('id')
 
     if (!id) {
       return NextResponse.json({ error: '缺少零件 ID' }, { status: 400 })
     }
+    const current = await db.part.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '零件不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     // Check for related inspection data items
     const dataItemCount = await db.inspection_data_item.count({ where: { part_id: id } })
@@ -248,6 +269,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await db.part.delete({ where: { id } })
+    await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'part', entityId: id, before: { code: current.code }, request })
 
     return NextResponse.json({ success: true })
   } catch (error) {

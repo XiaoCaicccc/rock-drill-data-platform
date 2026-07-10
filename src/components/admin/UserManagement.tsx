@@ -71,7 +71,7 @@ export function UserManagement() {
 
   // Form state
   const [formLoading, setFormLoading] = useState(false)
-  const [createForm, setCreateForm] = useState({ email: '', password: '', name: '', role: 'user' })
+  const [createForm, setCreateForm] = useState({ email: '', password: '', name: '', role: 'inspector' })
   const [editForm, setEditForm] = useState({ name: '', role: '', active: true })
 
   // ─── Fetch ───
@@ -104,7 +104,7 @@ export function UserManagement() {
   const stats = {
     total: users.length,
     admins: users.filter((u) => u.role === 'admin').length,
-    normals: users.filter((u) => u.role === 'user').length,
+    normals: users.filter((u) => u.role !== 'admin').length,
     disabled: users.filter((u) => !u.active).length,
   }
 
@@ -129,7 +129,7 @@ export function UserManagement() {
       }
       toast.success('用户创建成功')
       setCreateOpen(false)
-      setCreateForm({ email: '', password: '', name: '', role: 'user' })
+      setCreateForm({ email: '', password: '', name: '', role: 'inspector' })
       fetchUsers()
     } catch {
       toast.error('创建失败')
@@ -216,11 +216,7 @@ export function UserManagement() {
           icon={UserX}
           title={error}
           description="请确认您已登录且具有管理员权限"
-          action={
-            <Button variant="outline" onClick={fetchUsers}>
-              重新加载
-            </Button>
-          }
+          action={{ label: '重新加载', onClick: fetchUsers }}
         />
       </div>
     )
@@ -297,7 +293,7 @@ export function UserManagement() {
                       variant={user.role === 'admin' ? 'default' : 'secondary'}
                       className={user.role === 'admin' ? 'bg-amber-500/15 text-amber-700 hover:bg-amber-500/20' : ''}
                     >
-                      {user.role === 'admin' ? '管理员' : '用户'}
+                      {( { admin: '管理员', quality_manager: '质量经理', inspector: '检测员', engineer: '工程师', viewer: '只读审阅者' } as Record<string, string>)[user.role] ?? user.role}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -378,7 +374,10 @@ export function UserManagement() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">普通用户</SelectItem>
+                  <SelectItem value="quality_manager">质量经理</SelectItem>
+                  <SelectItem value="inspector">检测员</SelectItem>
+                  <SelectItem value="engineer">工程师</SelectItem>
+                  <SelectItem value="viewer">只读审阅者</SelectItem>
                   <SelectItem value="admin">管理员</SelectItem>
                 </SelectContent>
               </Select>
@@ -424,7 +423,10 @@ export function UserManagement() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">普通用户</SelectItem>
+                  <SelectItem value="quality_manager">质量经理</SelectItem>
+                  <SelectItem value="inspector">检测员</SelectItem>
+                  <SelectItem value="engineer">工程师</SelectItem>
+                  <SelectItem value="viewer">只读审阅者</SelectItem>
                   <SelectItem value="admin">管理员</SelectItem>
                 </SelectContent>
               </Select>
@@ -455,7 +457,6 @@ export function UserManagement() {
         title="确认删除用户"
         description={`确定要删除用户「${deleteUser?.name}」吗？此操作不可撤销。`}
         onConfirm={handleDelete}
-        loading={formLoading}
         variant="destructive"
       />
     </div>

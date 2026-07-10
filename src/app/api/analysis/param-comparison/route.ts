@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { requireAuth } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
   try {
+    const access = await requireAuth()
+    if (access instanceof Response) return access
     const { searchParams } = req.nextUrl
     const paramAId = searchParams.get('paramA_id')
     const paramBId = searchParams.get('paramB_id')

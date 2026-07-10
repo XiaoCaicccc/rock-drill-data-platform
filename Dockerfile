@@ -19,7 +19,7 @@ RUN npx prisma generate
 
 # next build (DATABASE_URL placeholder, not used at build time)
 ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
-RUN npx next build
+RUN npx next build --webpack
 
 # Copy static assets into standalone
 RUN cp -r .next/static .next/standalone/.next/static && \

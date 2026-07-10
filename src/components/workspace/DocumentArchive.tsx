@@ -44,7 +44,10 @@ interface Document {
   id: string
   title: string
   category: string // '报告' | '纪要' | '标准' | '制度' | '其他'
-  file_path: string | null
+  storage_key: string | null
+  original_name: string | null
+  file_size: number | null
+  mime_type: string | null
   related_report_id: string | null
   archived: boolean
   created_at: string
@@ -88,12 +91,6 @@ const INITIAL_FORM = {
 /* ================================================================
    Helpers
    ================================================================ */
-
-function extractFileName(filePath: string | null): string | null {
-  if (!filePath) return null
-  const parts = filePath.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1] || null
-}
 
 function formatDate(iso: string): string {
   return iso.slice(0, 10)
@@ -214,19 +211,23 @@ export default function DocumentArchive() {
     setUploading(true)
     setActionError(null)
     try {
-      const fd = new FormData()
-      fd.append('title', form.title.trim())
-      fd.append('category', form.category)
-      if (form.related_report_id.trim()) {
-        fd.append('related_report_id', form.related_report_id.trim())
-      }
+      let storage_key: string | null = null
       if (selectedFile) {
-        fd.append('file', selectedFile)
+        const prepare = await fetch('/api/documents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ original_name: selectedFile.name, file_size: selectedFile.size, mime_type: selectedFile.type }),
+        })
+        if (!prepare.ok) throw new Error((await prepare.json()).error || '无法获取上传地址')
+        const { uploadUrl, storageKey } = await prepare.json()
+        const uploaded = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': selectedFile.type || 'application/octet-stream' }, body: selectedFile })
+        if (!uploaded.ok) throw new Error('文件上传到对象存储失败')
+        storage_key = storageKey
       }
-
       const res = await fetch('/api/documents', {
-        method: 'POST',
-        body: fd,
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: form.title.trim(), category: form.category, related_report_id: form.related_report_id.trim() || null, storage_key, original_name: selectedFile?.name ?? null, file_size: selectedFile?.size ?? null, mime_type: selectedFile?.type ?? null }),
       })
 
       if (!res.ok) {
@@ -411,7 +412,7 @@ export default function DocumentArchive() {
               {/* 文档卡片 */}
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {docs.map(doc => {
-                  const fileName = extractFileName(doc.file_path)
+                  const fileName = doc.original_name
                   return (
                     <Card key={doc.id} className="group transition-shadow hover:shadow-md">
                       <CardContent className="space-y-2.5 p-4">

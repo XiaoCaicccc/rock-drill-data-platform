@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ─── GET: 会议列表 ───
 
 export async function GET() {
+  const access = await requireAuth()
+  if (access instanceof Response) return access
   const meetings = await db.meeting.findMany({
+    where: applyDataScope(access, {}),
     orderBy: { meeting_date: 'desc' },
     include: { resolutions: true },
   })
@@ -15,6 +20,8 @@ export async function GET() {
 // ─── POST: 创建会议 ───
 
 export async function POST(request: NextRequest) {
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
   const body = await request.json()
   const { title, meeting_date, location, organizer, participants } = body
 
@@ -29,15 +36,19 @@ export async function POST(request: NextRequest) {
       location: location || null,
       organizer: organizer.trim(),
       participants: participants || null,
+      created_by: access.user.id,
     },
   })
 
+  await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'meeting', entityId: meeting.id, after: { title: meeting.title }, request })
   return NextResponse.json({ meeting }, { status: 201 })
 }
 
 // ─── PUT: 更新会议（纪要/状态） ───
 
 export async function PUT(request: NextRequest) {
+  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  if (access instanceof Response) return access
   const body = await request.json()
   const { id, title, meeting_date, location, organizer, participants, minutes_content, status } = body
 
@@ -49,6 +60,8 @@ export async function PUT(request: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: '会议不存在' }, { status: 404 })
   }
+  const ownership = await requireOwnershipOrAdmin(existing.created_by)
+  if (ownership instanceof Response) return ownership
 
   const data: Record<string, unknown> = {}
   if (title !== undefined) data.title = title.trim()
@@ -65,5 +78,6 @@ export async function PUT(request: NextRequest) {
     include: { resolutions: true },
   })
 
+  await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'meeting', entityId: id, before: { status: existing.status, title: existing.title }, after: { status: updated.status, title: updated.title }, request })
   return NextResponse.json({ meeting: updated })
 }

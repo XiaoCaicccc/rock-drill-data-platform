@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
+import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 // ============================================================
 // GET — list all templates with items
@@ -8,10 +10,12 @@ import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   try {
+    const access = await requireAuth()
+    if (access instanceof Response) return access
     const categoryId = req.nextUrl.searchParams.get('categoryId')
-    const where: Prisma.parameter_templateWhereInput = categoryId
+    const where: Prisma.parameter_templateWhereInput = applyDataScope(access, categoryId
       ? { category_id: categoryId }
-      : {}
+      : {})
 
     const templates = await db.parameter_template.findMany({
       where,
@@ -58,6 +62,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const { category_id, name, items, version } = body
 
@@ -84,6 +90,7 @@ export async function POST(request: NextRequest) {
         category_id,
         name: name.trim(),
         version: version ?? 1,
+        created_by: access.user.id,
         items: {
           create: (items ?? []).map((item: Record<string, unknown>, idx: number) => ({
             param_name: (item.param_name as string) || `参数${idx + 1}`,
@@ -102,6 +109,7 @@ export async function POST(request: NextRequest) {
       include: { items: { orderBy: { sort_order: 'asc' } } },
     })
 
+    await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'parameter_template', entityId: template.id, after: { name: template.name }, request })
     return NextResponse.json({ template }, { status: 201 })
   } catch (error) {
     console.error('[POST /api/parameter-templates]', error)
@@ -115,12 +123,18 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const body = await request.json()
     const { id, name, version, items } = body
 
     if (!id) {
       return NextResponse.json({ error: '缺少模板 ID' }, { status: 400 })
     }
+    const current = await db.parameter_template.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '模板不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     const data: Prisma.parameter_templateUpdateInput = {}
     if (name !== undefined) {
@@ -158,6 +172,7 @@ export async function PUT(request: NextRequest) {
       include: { items: { orderBy: { sort_order: 'asc' } } },
     })
 
+    await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'parameter_template', entityId: id, before: { name: current.name, version: current.version }, after: { name: updated.name, version: updated.version }, request })
     return NextResponse.json({ template: updated })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
@@ -174,12 +189,18 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+    if (access instanceof Response) return access
     const { searchParams } = request.nextUrl
     const id = searchParams.get('id')
 
     if (!id) {
       return NextResponse.json({ error: '缺少模板 ID' }, { status: 400 })
     }
+    const current = await db.parameter_template.findUnique({ where: { id } })
+    if (!current) return NextResponse.json({ error: '模板不存在' }, { status: 404 })
+    const ownership = await requireOwnershipOrAdmin(current.created_by)
+    if (ownership instanceof Response) return ownership
 
     // Check for related inspection data items
     const itemIds = await db.parameter_item.findMany({
@@ -200,6 +221,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await db.parameter_template.delete({ where: { id } })
+    await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'parameter_template', entityId: id, before: { name: current.name }, request })
 
     return NextResponse.json({ success: true })
   } catch (error) {

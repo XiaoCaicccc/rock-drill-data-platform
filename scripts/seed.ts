@@ -534,6 +534,22 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   ]
   for (const op of deleteOps) await op
 
+  // 仅用于开发/演示；正式环境必须在首次登录后修改这些强密码。
+  const defaultPassword = await bcrypt.hash('R0ckDr!ll2024!', 12)
+  const seedUsers = await Promise.all([
+    ['admin@rockdrill.local', '系统管理员', 'admin'],
+    ['quality.manager@rockdrill.local', '质量经理', 'quality_manager'],
+    ['inspector@rockdrill.local', '检测工程师', 'inspector'],
+    ['engineer@rockdrill.local', '工艺工程师', 'engineer'],
+    ['viewer@rockdrill.local', '只读审阅者', 'viewer'],
+  ].map(async ([email, name, role]) => prisma.user.upsert({
+    where: { email },
+    update: { name, role: role as any, organization_id: 'org-1', active: true, password: defaultPassword, failed_login_attempts: 0, locked_until: null },
+    create: { email, name, role: role as any, organization_id: 'org-1', active: true, password: defaultPassword },
+  })))
+  const inspectorUser = seedUsers.find(user => user.role === 'inspector')!
+  const engineerUser = seedUsers.find(user => user.role === 'engineer')!
+
   // ─── Step 1: Categories ───
   console.log('[2/10] 创建零件类别...')
   await prisma.part_category.createMany({
@@ -674,6 +690,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
             inspection_date: new Date(dateStr),
             overall_result: '待检',
             remark: null,
+            user_id: inspectorUser.id,
           },
         })
         counts.inspection_record++
@@ -747,7 +764,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
 
   // ─── Step 6: Reports ───
   console.log('[7/10] 创建分析报告...')
-  await prisma.analysis_report.createMany({ data: REPORTS })
+  await prisma.analysis_report.createMany({ data: REPORTS.map(report => ({ ...report, user_id: engineerUser.id })) })
   counts.analysis_report = REPORTS.length
 
   // ─── Step 7: Tasks ───
@@ -755,6 +772,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   await prisma.task.createMany({
     data: TASKS.map(t => ({
       ...t,
+      user_id: engineerUser.id,
       due_date: t.due_date ? new Date(t.due_date) : null,
     })),
   })
@@ -793,9 +811,12 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
     data: DOCUMENTS.map(d => ({
       title: d.title,
       category: d.category,
-      file_path: d.file_path,
+      // 种子只保留历史元数据；实际文件必须经 MinIO/S3 上传。
+      storage_key: d.file_path,
+      original_name: d.file_path.split('/').pop() || null,
       related_report_id: d.related_report_no ? reportIdMap.get(d.related_report_no) || null : null,
       archived: false,
+      created_by: engineerUser.id,
     })),
   })
   counts.document = DOCUMENTS.length
@@ -807,26 +828,13 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
       member_name: name,
       status: ATTENDANCE_POOL[Math.floor(Math.random() * ATTENDANCE_POOL.length)],
       remark: null,
+      created_by: engineerUser.id,
     })),
   )
   await prisma.attendance_record.createMany({ data: attendanceData })
   counts.attendance_record = attendanceData.length
 
-  // ─── Admin User (idempotent) ───
-  const existingAdmin = await prisma.user.findUnique({ where: { email: 'admin@rockdrill.com' } })
-  if (!existingAdmin) {
-    const hashedPassword = await bcrypt.hash('admin123', 10)
-    await prisma.user.create({
-      data: {
-        email: 'admin@rockdrill.com',
-        password: hashedPassword,
-        name: '系统管理员',
-        role: 'admin',
-        active: true,
-      },
-    })
-    console.log('  Created admin user: admin@rockdrill.com')
-  }
+  console.log('  已创建 5 个角色测试用户；开发密码：R0ckDr!ll2024!（生产环境必须修改）')
 
   // ─── Summary ───
   console.log('\n✅ 种子数据创建完成！')

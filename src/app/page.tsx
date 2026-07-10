@@ -101,7 +101,7 @@ function AppShell() {
         <AppSidebar userRole={userRole} />
         <div className="flex flex-1 flex-col overflow-hidden">
           <AppHeader />
-          <main className="flex-1 overflow-y-auto bg-muted/30">
+          <main className="flex-1 overflow-y-auto bg-muted/30 p-6">
             <ViewRouter view={currentView} />
           </main>
           <footer className="border-t bg-background px-4 py-2">

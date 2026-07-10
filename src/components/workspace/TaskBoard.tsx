@@ -527,9 +527,7 @@ export default function TaskBoard() {
                 ) : (
                   col.items.map((task) => {
                     const nextStatus = NEXT_STATUS_MAP[task.status as TaskStatus]
-                    const canCloseDirectly =
-                      (task.status === '待办' || task.status === '进行中') &&
-                      task.status !== '已关闭'
+                    const canCloseDirectly = task.status === '待办' || task.status === '进行中'
 
                     return (
                       <Card

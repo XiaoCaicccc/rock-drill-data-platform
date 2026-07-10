@@ -25,7 +25,6 @@ const DEFAULT_COLOR_MAP: Record<string, string> = {
   '已完成': 'bg-emerald-100 text-emerald-700 border-emerald-200',
   // 会议状态
   '待召开': 'bg-purple-100 text-purple-700 border-purple-200',
-  '已完成': 'bg-emerald-100 text-emerald-700 border-emerald-200',
   // 决议状态
   '待执行': 'bg-amber-100 text-amber-700 border-amber-200',
   '执行中': 'bg-orange-100 text-orange-700 border-orange-200',
