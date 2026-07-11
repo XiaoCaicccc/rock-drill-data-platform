@@ -133,6 +133,9 @@ export default function InspectionEntryView() {
         const loadedParts: PartRow[] = (partsData.parts || []).map(
           (p: Record<string, unknown>) => ({
             id: p.id as string,
+            part_revision_id: p.part_revision_id as string,
+            revision_no: (p.revision_no as string) || '未知版本',
+            drawing_no: (p.drawing_no as string) || null,
             code: p.code as string,
             name: p.name as string,
             category_code: (p.category_code as string) || '',
@@ -301,7 +304,7 @@ export default function InspectionEntryView() {
 
       // Collect non-empty cells
       const items: Array<{
-        part_id: string
+        part_revision_id: string
         param_item_id: string
         value_number: number | null
         value_text: string | null
@@ -314,7 +317,7 @@ export default function InspectionEntryView() {
         if (!param) continue
 
         items.push({
-          part_id: partId,
+          part_revision_id: partId,
           param_item_id: paramItemId,
           value_number:
             param.data_type === 'number' && !isNaN(parseFloat(value))

@@ -56,6 +56,7 @@ interface Report {
   status: string
   created_at: string
   updated_at: string
+  part_revision_links: Array<{ part_revision: { id: string; revision_no: string; drawing_no: string | null; part: { code: string; name: string } } }>
 }
 
 type TabValue = '' | '草稿' | '已发布' | '已归档'
@@ -87,6 +88,7 @@ const INITIAL_FORM = {
   summary: '',
   conclusion: '',
   author: '',
+  part_revision_ids: [] as string[],
 }
 
 /* ================================================================
@@ -105,6 +107,7 @@ export default function ReportView() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(INITIAL_FORM)
   const [formSaving, setFormSaving] = useState(false)
+  const [releasedRevisions, setReleasedRevisions] = useState<Array<{ id: string; label: string }>>([])
 
   const [deleteTarget, setDeleteTarget] = useState<Report | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -131,6 +134,12 @@ export default function ReportView() {
   useEffect(() => {
     fetchReports(activeTab)
   }, [activeTab])
+
+  useEffect(() => {
+    fetch('/api/parts').then((response) => response.json()).then((data) => {
+      setReleasedRevisions((data.parts ?? []).flatMap((part: { code: string; name: string; current_revision: { id: string; revision_no: string; drawing_no: string | null } | null }) => part.current_revision ? [{ id: part.current_revision.id, label: `${part.code} ${part.name} V${part.current_revision.revision_no}${part.current_revision.drawing_no ? ` · ${part.current_revision.drawing_no}` : ''}` }] : []))
+    }).catch(() => undefined)
+  }, [])
 
   /* ── stats ── */
   const stats = {
@@ -160,6 +169,7 @@ export default function ReportView() {
       summary: r.summary ?? '',
       conclusion: r.conclusion ?? '',
       author: r.author,
+      part_revision_ids: r.part_revision_links.map(link => link.part_revision.id),
     })
     setFormOpen(true)
     setActionError('')
@@ -382,6 +392,9 @@ export default function ReportView() {
                     周期：{r.period}
                   </p>
                 )}
+                {r.part_revision_links.length > 0 && (
+                  <p className="text-xs text-muted-foreground">引用版本：{r.part_revision_links.map(link => `${link.part_revision.part.code} V${link.part_revision.revision_no}`).join('、')}</p>
+                )}
 
                 {/* 底部：编制人 + 日期 + 操作 */}
                 <div className="flex items-center justify-between border-t pt-3">
@@ -467,6 +480,18 @@ export default function ReportView() {
                 onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
                 placeholder="请输入报告标题"
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>关联零件版本</Label>
+              <div className="flex flex-col gap-2 rounded-md border p-3">
+                {releasedRevisions.map(revision => (
+                  <label key={revision.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.part_revision_ids.includes(revision.id)} onChange={() => setForm(current => ({ ...current, part_revision_ids: current.part_revision_ids.includes(revision.id) ? current.part_revision_ids.filter(id => id !== revision.id) : [...current.part_revision_ids, revision.id] }))} />
+                    {revision.label}
+                  </label>
+                ))}
+              </div>
             </div>
 
             {/* 类型 + 周期 */}

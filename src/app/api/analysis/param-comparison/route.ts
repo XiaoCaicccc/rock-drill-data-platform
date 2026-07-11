@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
     const paramBId = searchParams.get('paramB_id')
     const categoryId = searchParams.get('category_id')
     const equipmentId = searchParams.get('equipment_id')
+    const partRevisionId = searchParams.get('part_revision_id')
 
     if (!paramAId || !paramBId) {
       return NextResponse.json(
@@ -60,6 +61,7 @@ export async function GET(req: NextRequest) {
             part: { category_id: categoryId },
           }
         : {}),
+      ...(partRevisionId ? { part_revision_id: partRevisionId } : {}),
     }
 
     // 取 paramA 的所有数据项（含关联）
@@ -69,7 +71,8 @@ export async function GET(req: NextRequest) {
         record_id: true,
         value_number: true,
         is_qualified: true,
-        part: { select: { code: true } },
+        part: { select: { code: true, name: true } },
+        part_revision: { select: { revision_no: true, drawing_no: true } },
         record: { select: { record_no: true } },
       },
     })
@@ -85,7 +88,8 @@ export async function GET(req: NextRequest) {
         record_id: true,
         value_number: true,
         is_qualified: true,
-        part: { select: { code: true } },
+        part: { select: { code: true, name: true } },
+        part_revision: { select: { revision_no: true, drawing_no: true } },
         record: { select: { record_no: true } },
       },
     })
@@ -96,6 +100,8 @@ export async function GET(req: NextRequest) {
       valueB: number
       isQualified: boolean
       partCode: string
+      revisionNo: string | null
+      drawingNo: string | null
       recordNo: string
     }
 
@@ -115,6 +121,8 @@ export async function GET(req: NextRequest) {
         valueB: vB,
         isQualified: itemA.is_qualified === true && itemB.is_qualified === true,
         partCode: itemA.part.code,
+        revisionNo: itemA.part_revision?.revision_no ?? null,
+        drawingNo: itemA.part_revision?.drawing_no ?? null,
         recordNo: itemA.record.record_no,
       })
       valuesA.push(vA)

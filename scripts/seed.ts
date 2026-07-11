@@ -519,6 +519,8 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   console.log('[1/10] 清空所有表...')
   const deleteOps: Promise<any>[] = [
     prisma.inspection_data_item.deleteMany(),   // ①
+    prisma.analysis_report_part_revision.deleteMany(),
+    prisma.equipment_part_installation.deleteMany(),
     prisma.meeting_resolution.deleteMany(),      // ②
     prisma.meeting.deleteMany(),                 // ③
     prisma.inspection_record.deleteMany(),       // ④
@@ -652,7 +654,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
     revision: { spec, material, supplier },
   }))
   for (const partData of partsData) {
-    const { revision, ...part } = partData
+    const { revision, equipment_id, ...part } = partData
     const createdPart = await prisma.part.create({ data: part })
     const createdRevision = await prisma.part_revision.create({
       data: {
@@ -680,6 +682,18 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
       where: { id: createdPart.id },
       data: { current_revision_id: createdRevision.id },
     })
+    if (equipment_id) {
+      await prisma.equipment_part_installation.create({
+        data: {
+          equipment_id,
+          part_revision_id: createdRevision.id,
+          installed_at: new Date('2024-06-01'),
+          status: 'active',
+          created_by: engineerUser.id,
+          remark: '种子数据初始装配',
+        },
+      })
+    }
   }
 
   // 额外的草稿版本样例：用于演示“已发布版本不可编辑，只能升版”。
@@ -708,8 +722,12 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   const parts = await prisma.part.findMany()
   counts.part = parts.length
 
-  // Build: equipment_id -> parts[]
-  const eqPartsMap = new Map(equipment.map(e => [e.id, parts.filter(p => p.equipment_id === e.id)]))
+  // Build: equipment_id -> parts[] from versioned installation history.
+  const activeInstallations = await prisma.equipment_part_installation.findMany({
+    where: { status: 'active' },
+    include: { part_revision: { include: { part: true } } },
+  })
+  const eqPartsMap = new Map(equipment.map(e => [e.id, activeInstallations.filter(i => i.equipment_id === e.id).map(i => i.part_revision.part)]))
 
   // ─── Step 5: Inspection Records & Data Items ───
   console.log('[6/10] 创建检测记录和明细数据...')
@@ -751,6 +769,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
         const dataItems: {
           record_id: string
           part_id: string
+          part_revision_id: string
           param_item_id: string
           value_number: number | null
           value_text: string | null
@@ -759,6 +778,8 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
         }[] = []
 
         for (const part of eqParts) {
+          const revision = await prisma.part_revision.findUnique({ where: { id: part.current_revision_id! } })
+          if (!revision) continue
           const paramDefs = catParamMap.get(part.category_id)
           if (!paramDefs) continue
 
@@ -770,6 +791,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
               dataItems.push({
                 record_id: record.id,
                 part_id: part.id,
+                part_revision_id: revision.id,
                 param_item_id: pd.id,
                 value_number: null,
                 value_text: val,
@@ -785,6 +807,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
               dataItems.push({
                 record_id: record.id,
                 part_id: part.id,
+                part_revision_id: revision.id,
                 param_item_id: pd.id,
                 value_number: value,
                 value_text: null,

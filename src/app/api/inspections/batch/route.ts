@@ -1,189 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { requireRole } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
 
-// ============================================================
-// POST — batch create inspection_record + inspection_data_items
-// ============================================================
-
 interface BatchItem {
-  part_id: string
+  part_revision_id: string
   param_item_id: string
   value_number: number | null
   value_text: string | null
 }
 
+// POST — 新检测数据必须绑定已发布的零件版本。
 export async function POST(request: NextRequest) {
   try {
     const access = await requireRole(['admin', 'quality_manager', 'engineer', 'inspector'])
     if (access instanceof Response) return access
-    const userId = access.user.id
-
     const body = await request.json()
-    const { record, items } = body as {
-      record: {
-        equipment_id?: string
-        inspector: string
-        batch_no?: string
-        inspection_date: string
-        remark?: string
-      }
-      items: BatchItem[]
-    }
+    const { record, items } = body as { record: { equipment_id?: string; inspector: string; batch_no?: string; inspection_date: string; remark?: string }; items: BatchItem[] }
 
-    // --- Validate record ---
-    if (!record) {
-      return NextResponse.json({ error: '缺少检测记录信息' }, { status: 400 })
-    }
-    if (!record.inspector?.trim()) {
-      return NextResponse.json({ error: '检测人员不能为空' }, { status: 400 })
-    }
-    if (!record.inspection_date) {
-      return NextResponse.json({ error: '检测日期不能为空' }, { status: 400 })
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ error: '检测数据不能为空' }, { status: 400 })
-    }
+    if (!record?.inspector?.trim() || !record.inspection_date) return NextResponse.json({ error: '检测人员和检测日期不能为空' }, { status: 400 })
+    if (!Array.isArray(items) || items.length === 0) return NextResponse.json({ error: '检测数据不能为空' }, { status: 400 })
+    if (record.equipment_id && !await db.equipment.findUnique({ where: { id: record.equipment_id } })) return NextResponse.json({ error: '设备不存在' }, { status: 400 })
 
-    // --- Validate equipment ---
-    if (record.equipment_id) {
-      const equip = await db.equipment.findUnique({
-        where: { id: record.equipment_id },
-        select: { id: true },
-      })
-      if (!equip) {
-        return NextResponse.json({ error: '设备不存在' }, { status: 400 })
-      }
-    }
-
-    // --- Validate FK references ---
-    const partIds = [...new Set(items.map((i: BatchItem) => i.part_id))]
-    const paramItemIds = [...new Set(items.map((i: BatchItem) => i.param_item_id))]
-
-    const [parts, paramItems] = await Promise.all([
-      db.part.findMany({
-        where: { id: { in: partIds } },
-        select: { id: true },
-      }),
-      db.parameter_item.findMany({
-        where: { id: { in: paramItemIds } },
-        select: {
-          id: true,
-          standard_min: true,
-          standard_max: true,
-          optimal_min: true,
-          optimal_max: true,
-        },
-      }),
+    const revisionIds = [...new Set(items.map((item) => item.part_revision_id))]
+    const paramItemIds = [...new Set(items.map((item) => item.param_item_id))]
+    const [revisions, paramItems] = await Promise.all([
+      db.part_revision.findMany({ where: { id: { in: revisionIds } }, select: { id: true, part_id: true, lifecycle_state: true } }),
+      db.parameter_item.findMany({ where: { id: { in: paramItemIds } }, select: { id: true, standard_min: true, standard_max: true, optimal_min: true, optimal_max: true } }),
     ])
+    const revisionMap = new Map(revisions.map((revision) => [revision.id, revision]))
+    const parameterMap = new Map(paramItems.map((parameter) => [parameter.id, parameter]))
 
-    const partIdSet = new Set(parts.map((p) => p.id))
-    const paramItemMap = new Map(paramItems.map((p) => [p.id, p]))
-
-    for (const item of items) {
-      if (!partIdSet.has(item.part_id)) {
-        return NextResponse.json(
-          { error: '零件不存在' },
-          { status: 400 },
-        )
-      }
-      if (!paramItemMap.has(item.param_item_id)) {
-        return NextResponse.json(
-          { error: '参数项不存在' },
-          { status: 400 },
-        )
-      }
-    }
-
-    // --- Generate record_no: JC-YYYYMMDD-NNN ---
-    const dateStr = record.inspection_date.slice(0, 10).replace(/-/g, '')
-    const prefix = `JC-${dateStr}-`
-    // --- Compute is_qualified / is_optimal per item ---
-    const processedItems = items.map((item: BatchItem) => {
-      const paramDef = paramItemMap.get(item.param_item_id)!
-
-      let is_qualified: boolean | null = null
-      let is_optimal: boolean | null = null
-
-      if (item.value_number != null) {
-        const v = item.value_number
-        const sMin = paramDef.standard_min
-        const sMax = paramDef.standard_max
-        const oMin = paramDef.optimal_min
-        const oMax = paramDef.optimal_max
-
-        if (sMin != null && sMax != null) {
-          is_qualified = v >= sMin && v <= sMax
-        }
-        if (oMin != null && oMax != null) {
-          is_optimal = v >= oMin && v <= oMax
-        }
-      }
-
-      return {
-        part_id: item.part_id,
-        param_item_id: item.param_item_id,
-        value_number: item.value_number,
-        value_text: item.value_text || null,
-        is_qualified,
-        is_optimal,
-      }
+    const processedItems = items.map((item) => {
+      const revision = revisionMap.get(item.part_revision_id)
+      if (!revision) throw new Error('零件版本不存在')
+      if (revision.lifecycle_state !== 'released') throw new Error('检测数据只能引用已发布的零件版本')
+      const parameter = parameterMap.get(item.param_item_id)
+      if (!parameter) throw new Error('参数项不存在')
+      const value = item.value_number
+      const isQualified = value == null || parameter.standard_min == null || parameter.standard_max == null
+        ? null : value >= parameter.standard_min && value <= parameter.standard_max
+      const isOptimal = value == null || parameter.optimal_min == null || parameter.optimal_max == null
+        ? null : value >= parameter.optimal_min && value <= parameter.optimal_max
+      return { part_id: revision.part_id, part_revision_id: revision.id, param_item_id: item.param_item_id, value_number: value, value_text: item.value_text || null, is_qualified: isQualified, is_optimal: isOptimal }
     })
 
-    // --- Overall result ---
-    const checkedItems = processedItems.filter((i) => i.is_qualified !== null)
-    const qualifiedCount = checkedItems.filter(
-      (i) => i.is_qualified === true,
-    ).length
-    let overall_result = '待检'
-    if (checkedItems.length > 0) {
-      overall_result =
-        qualifiedCount === checkedItems.length ? '合格' : '不合格'
-    }
+    const checked = processedItems.filter((item) => item.is_qualified !== null)
+    const overallResult = checked.length === 0 ? '待检' : checked.every((item) => item.is_qualified) ? '合格' : '不合格'
+    const datePrefix = `JC-${record.inspection_date.slice(0, 10).replace(/-/g, '')}-`
+    const inspectionRecord = await db.$transaction(async (tx) => {
+      const count = await tx.inspection_record.count({ where: { record_no: { startsWith: datePrefix } } })
+      const recordNo = `${datePrefix}${String(count + 1).padStart(3, '0')}`
+      return tx.inspection_record.create({
+        data: { record_no: recordNo, equipment_id: record.equipment_id || null, inspector: record.inspector.trim(), batch_no: record.batch_no?.trim() || null, inspection_date: new Date(record.inspection_date), overall_result: overallResult, remark: record.remark?.trim() || null, user_id: access.user.id, data_items: { createMany: { data: processedItems } } },
+        include: { data_items: true },
+      })
+    }, { isolationLevel: 'Serializable' })
 
-    // --- Create record + items (createMany) ---
-    // SERIALIZABLE 会让并发的“当日编号 + 1”其中一个事务重试，避免唯一键冲突。
-    let inspectionRecord: Awaited<ReturnType<typeof db.inspection_record.create>> | null = null
-    let recordNo = ''
-    for (let attempt = 0; attempt < 3 && !inspectionRecord; attempt++) {
-      try {
-        inspectionRecord = await db.$transaction(async (tx) => {
-          const existingCount = await tx.inspection_record.count({ where: { record_no: { startsWith: prefix } } })
-          recordNo = `${prefix}${String(existingCount + 1).padStart(3, '0')}`
-          return tx.inspection_record.create({
-            data: {
-              record_no: recordNo,
-              equipment_id: record.equipment_id || null,
-              inspector: record.inspector.trim(),
-              batch_no: record.batch_no?.trim() || null,
-              inspection_date: new Date(record.inspection_date),
-              overall_result,
-              remark: record.remark?.trim() || null,
-              user_id: userId,
-              data_items: { createMany: { data: processedItems } },
-            },
-            include: { data_items: true },
-          })
-        }, { isolationLevel: 'Serializable' })
-      } catch (error) {
-        if (attempt === 2) throw error
-      }
-    }
-    if (!inspectionRecord) throw new Error('无法生成检测记录编号')
-
-    await logAudit({ userId, action: 'CREATE', entityType: 'inspection_record', entityId: inspectionRecord.id, after: { record_no: recordNo, item_count: processedItems.length }, request })
-
-    return NextResponse.json(
-      {
-        record: inspectionRecord,
-        message: `检测记录 ${recordNo} 已保存，共 ${processedItems.length} 条数据`,
-      },
-      { status: 201 },
-    )
+    await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'inspection_record', entityId: inspectionRecord.id, after: { record_no: inspectionRecord.record_no, item_count: processedItems.length }, request })
+    return NextResponse.json({ record: inspectionRecord, message: `检测记录 ${inspectionRecord.record_no} 已保存，共 ${processedItems.length} 条数据` }, { status: 201 })
   } catch (error) {
+    const message = error instanceof Error ? error.message : '保存检测数据失败'
+    const status = message.includes('只能引用') ? 409 : 400
     console.error('[POST /api/inspections/batch]', error)
-    return NextResponse.json({ error: '保存检测数据失败' }, { status: 500 })
+    return NextResponse.json({ error: message }, { status })
   }
 }

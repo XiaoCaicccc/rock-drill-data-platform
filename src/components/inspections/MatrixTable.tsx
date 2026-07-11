@@ -15,6 +15,9 @@ import { cn } from '@/lib/utils'
 
 export interface PartRow {
   id: string
+  part_revision_id: string
+  revision_no: string
+  drawing_no: string | null
   code: string
   name: string
   category_code: string
@@ -127,6 +130,12 @@ export function MatrixTable({
         size: 110,
       },
       {
+        id: 'revision',
+        header: '版本',
+        accessorKey: 'revision_no',
+        size: 72,
+      },
+      {
         id: 'name',
         header: '零件名称',
         accessorKey: 'name',
@@ -199,7 +208,7 @@ export function MatrixTable({
   const table = useReactTable({
     data: parts,
     columns,
-    state: { columnPinning: { left: ['code', 'name'] } },
+    state: { columnPinning: { left: ['code', 'revision', 'name'] } },
     getCoreRowModel: getCoreRowModel(),
   })
 

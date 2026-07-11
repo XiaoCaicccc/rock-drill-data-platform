@@ -41,6 +41,12 @@ export async function GET(request: NextRequest) {
       where,
       include: {
         equipment: { select: { id: true, machine_no: true, model: true } },
+        data_items: {
+          select: {
+            part: { select: { code: true, name: true } },
+            part_revision: { select: { revision_no: true, drawing_no: true } },
+          },
+        },
         _count: { select: { data_items: true } },
       },
       orderBy: { created_at: 'desc' },
@@ -49,5 +55,14 @@ export async function GET(request: NextRequest) {
     }),
   ])
 
-  return NextResponse.json({ records, total, page, pageSize })
+  const result = records.map((record) => ({
+    ...record,
+    part_versions: Array.from(new Map(record.data_items.map((item) => {
+      const label = item.part_revision
+        ? `${item.part.code} ${item.part.name} V${item.part_revision.revision_no}`
+        : `${item.part.code} ${item.part.name} 未知版本`
+      return [label, { ...item.part, revision_no: item.part_revision?.revision_no ?? null, drawing_no: item.part_revision?.drawing_no ?? null }]
+    })).values()),
+  }))
+  return NextResponse.json({ records: result, total, page, pageSize })
 }

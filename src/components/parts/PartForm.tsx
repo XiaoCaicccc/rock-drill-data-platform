@@ -31,7 +31,6 @@ export interface PartPayload {
   code: string
   name: string
   category_id: string
-  equipment_id: string | null
   install_date: string | null
   working_hours: number
   is_active: boolean
@@ -52,7 +51,6 @@ type EditablePart = {
   code: string
   name: string
   category_id: string
-  equipment_id: string | null
   install_date: string | null
   working_hours: number
   is_active: boolean
@@ -69,7 +67,7 @@ interface PartFormProps {
 }
 
 const EMPTY_FORM: FormState = {
-  code: '', name: '', category_id: '', equipment_id: null, install_date: null, working_hours: 0, is_active: true,
+  code: '', name: '', category_id: '', install_date: null, working_hours: 0, is_active: true,
   drawing_no: null, unit: '件', specification: null, material: null, supplier: null, criticality: 'normal',
   key_characteristics: '', change_summary: null, remark: null,
 }
@@ -77,7 +75,6 @@ const EMPTY_FORM: FormState = {
 export function PartForm({ open, onOpenChange, editData, onSubmit }: PartFormProps) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [categories, setCategories] = useState<{ id: string; name: string; code: string }[]>([])
-  const [equipment, setEquipment] = useState<{ id: string; machine_no: string; model: string }[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -88,11 +85,10 @@ export function PartForm({ open, onOpenChange, editData, onSubmit }: PartFormPro
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    Promise.all([fetch('/api/categories').then((response) => response.json()), fetch('/api/equipment').then((response) => response.json())])
-      .then(([categoryJson, equipmentJson]) => {
+    fetch('/api/categories').then((response) => response.json())
+      .then((categoryJson) => {
         if (cancelled) return
         setCategories(categoryJson.categories ?? [])
-        setEquipment(equipmentJson.equipment ?? [])
       })
       .catch(() => undefined)
     return () => { cancelled = true }
@@ -107,7 +103,6 @@ export function PartForm({ open, onOpenChange, editData, onSubmit }: PartFormPro
         code: editData.code,
         name: editData.name,
         category_id: editData.category_id,
-        equipment_id: editData.equipment_id,
         install_date: editData.install_date,
         working_hours: editData.working_hours,
         is_active: editData.is_active,
@@ -183,7 +178,6 @@ export function PartForm({ open, onOpenChange, editData, onSubmit }: PartFormPro
             <Field label="零件编号 *"><Input value={form.code} disabled={Boolean(editData)} onChange={(event) => update('code', event.target.value)} /></Field>
             <Field label="零件名称 *"><Input value={form.name} onChange={(event) => update('name', event.target.value)} /></Field>
             <Field label="零件类别 *"><Select value={form.category_id} onValueChange={(value) => update('category_id', value)}><SelectTrigger><SelectValue placeholder="请选择类别" /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.code} {category.name}</SelectItem>)}</SelectContent></Select></Field>
-            <Field label="关联设备"><Select value={form.equipment_id ?? '__none__'} onValueChange={(value) => update('equipment_id', value === '__none__' ? null : value)}><SelectTrigger><SelectValue placeholder="无关联设备" /></SelectTrigger><SelectContent><SelectItem value="__none__">无关联设备</SelectItem>{equipment.map((item) => <SelectItem key={item.id} value={item.id}>{item.machine_no} {item.model}</SelectItem>)}</SelectContent></Select></Field>
             <Field label="安装日期"><Input type="date" value={form.install_date ?? ''} onChange={(event) => update('install_date', event.target.value || null)} /></Field>
             <Field label="累计工时 (h)"><Input type="number" min="0" value={form.working_hours} onChange={(event) => update('working_hours', Number(event.target.value) || 0)} /></Field>
           </div>

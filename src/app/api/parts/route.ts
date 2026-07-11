@@ -45,7 +45,6 @@ export async function GET(request: NextRequest) {
       where,
       include: {
         category: { select: { id: true, name: true, code: true } },
-        equipment: { select: { id: true, machine_no: true, model: true } },
         current_revision: true,
         revisions: { orderBy: { revision_seq: 'desc' }, take: 1 },
         _count: { select: { data_items: true } },
@@ -61,9 +60,6 @@ export async function GET(request: NextRequest) {
         category_id: part.category_id,
         category_name: part.category.name,
         category_code: part.category.code,
-        equipment_id: part.equipment_id,
-        equipment_machine_no: part.equipment?.machine_no ?? null,
-        equipment_model: part.equipment?.model ?? null,
         install_date: part.install_date?.toISOString().slice(0, 10) ?? null,
         working_hours: part.working_hours,
         is_active: part.is_active,
@@ -98,9 +94,6 @@ export async function POST(request: NextRequest) {
     ])
     if (existing) return NextResponse.json({ error: `零件编号 "${body.code}" 已存在` }, { status: 409 })
     if (!category) return NextResponse.json({ error: '所选类别不存在' }, { status: 400 })
-    if (body.equipment_id && !await db.equipment.findUnique({ where: { id: body.equipment_id } })) {
-      return NextResponse.json({ error: '所选设备不存在' }, { status: 400 })
-    }
 
     let keyCharacteristics: Prisma.InputJsonValue | null
     try {
@@ -115,7 +108,6 @@ export async function POST(request: NextRequest) {
           code: body.code.trim(),
           name: body.name.trim(),
           category_id: body.category_id,
-          equipment_id: body.equipment_id || null,
           install_date: body.install_date ? new Date(body.install_date) : null,
           working_hours: Number(body.working_hours) || 0,
           is_active: body.is_active !== false,

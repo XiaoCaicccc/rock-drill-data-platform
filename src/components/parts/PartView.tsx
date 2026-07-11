@@ -20,8 +20,6 @@ interface Part {
   category_id: string
   category_name: string
   category_code: string
-  equipment_id: string | null
-  equipment_machine_no: string | null
   install_date: string | null
   working_hours: number
   is_active: boolean

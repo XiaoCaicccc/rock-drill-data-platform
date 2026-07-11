@@ -71,6 +71,8 @@ interface DataPoint {
   isQualified: boolean
   partCode: string
   recordNo: string
+  revisionNo: string | null
+  drawingNo: string | null
 }
 
 interface ParamInfo {
@@ -380,12 +382,14 @@ export default function AnalysisView() {
   /* ── state ── */
   const [categories, setCategories] = useState<Category[]>([])
   const [equipment, setEquipment] = useState<Equipment[]>([])
+  const [partRevisions, setPartRevisions] = useState<Array<{ id: string; label: string }>>([])
   const [parameters, setParameters] = useState<ParamItem[]>([])
 
   const [categoryId, setCategoryId] = useState('')
   const [paramAId, setParamAId] = useState('')
   const [paramBId, setParamBId] = useState('')
   const [equipmentId, setEquipmentId] = useState('')
+  const [partRevisionId, setPartRevisionId] = useState('')
 
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -408,7 +412,10 @@ export default function AnalysisView() {
         const catData = await catRes.json()
         const eqData = await eqRes.json()
         setCategories(catData.categories ?? [])
-        setEquipment(eqData.equipment ?? [])
+      setEquipment(eqData.equipment ?? [])
+        const partRes = await fetch('/api/parts')
+        const partData = await partRes.json()
+        setPartRevisions((partData.parts ?? []).flatMap((part: { code: string; name: string; current_revision: { id: string; revision_no: string; drawing_no: string | null } | null }) => part.current_revision ? [{ id: part.current_revision.id, label: `${part.code} V${part.current_revision.revision_no}${part.current_revision.drawing_no ? ` · ${part.current_revision.drawing_no}` : ''}` }] : []))
       } catch {
         /* silent */
       } finally {
@@ -460,6 +467,7 @@ export default function AnalysisView() {
       const qs = new URLSearchParams({ paramA_id: paramAId, paramB_id: paramBId })
       if (categoryId) qs.set('category_id', categoryId)
       if (equipmentId) qs.set('equipment_id', equipmentId)
+      if (partRevisionId) qs.set('part_revision_id', partRevisionId)
 
       const res = await fetch(`/api/analysis/param-comparison?${qs}`, { signal: ctrl.signal })
       if (!res.ok) {
@@ -474,7 +482,7 @@ export default function AnalysisView() {
     } finally {
       setLoading(false)
     }
-  }, [paramAId, paramBId, categoryId, equipmentId])
+  }, [paramAId, paramBId, categoryId, equipmentId, partRevisionId])
 
   useEffect(() => {
     if (!paramAId || !paramBId) { setResult(null); return }
@@ -499,6 +507,7 @@ export default function AnalysisView() {
   const onParamAChange = (v: string) => { setParamAId(v); if (v === paramBId) setParamBId('') }
   const onParamBChange = (v: string) => { setParamBId(v); if (v === paramAId) setParamAId('') }
   const onEquipmentChange = (v: string) => setEquipmentId(v === 'all' ? '' : v)
+  const onPartRevisionChange = (v: string) => setPartRevisionId(v === 'all' ? '' : v)
 
   /* ── render ── */
   const hasData = !loading && !error && result && result.dataPoints.length > 0
@@ -515,7 +524,7 @@ export default function AnalysisView() {
       {/* ── 参数选择器 ── */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {/* 类别 */}
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">零件类别</Label>
@@ -535,6 +544,14 @@ export default function AnalysisView() {
                     </SelectItem>
                   ))}
                 </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">零件版本筛选（可选）</Label>
+              <Select value={partRevisionId || 'all'} onValueChange={onPartRevisionChange} disabled={initLoading}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="全部版本" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部已发布版本</SelectItem>{partRevisions.map(revision => <SelectItem key={revision.id} value={revision.id}>{revision.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
 

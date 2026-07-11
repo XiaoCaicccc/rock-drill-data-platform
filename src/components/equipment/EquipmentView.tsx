@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -72,6 +74,8 @@ interface EquipmentPart {
   name: string
   category_name: string
   category_code: string
+  revision_no: string
+  drawing_no: string | null
   specification: string | null
   material: string | null
   supplier: string | null
@@ -79,6 +83,14 @@ interface EquipmentPart {
   working_hours: number
   status: string
   remark: string | null
+}
+
+interface Installation {
+  id: string
+  status: string
+  installed_at: string
+  removed_at: string | null
+  part_revision: { revision_no: string; drawing_no: string | null; part: { code: string; name: string } }
 }
 
 // ============================
@@ -126,9 +138,14 @@ export default function EquipmentView() {
   const [deleteTarget, setDeleteTarget] = useState<Equipment | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [removalTarget, setRemovalTarget] = useState<Installation | null>(null)
 
   // ---- Detail: parts ----
   const [parts, setParts] = useState<EquipmentPart[]>([])
+  const [installations, setInstallations] = useState<Installation[]>([])
+  const [releasedRevisions, setReleasedRevisions] = useState<Array<{ id: string; label: string }>>([])
+  const [selectedRevisionId, setSelectedRevisionId] = useState('')
+  const [installationDate, setInstallationDate] = useState('')
   const [partsLoading, setPartsLoading] = useState(false)
 
   // ---- Action feedback ----
@@ -179,6 +196,18 @@ export default function EquipmentView() {
       setParts([])
     } finally {
       setPartsLoading(false)
+    }
+  }, [])
+
+  const fetchInstallations = useCallback(async (equipId: string) => {
+    try {
+      const [historyResponse, partsResponse] = await Promise.all([fetch(`/api/equipment/${equipId}/installations`), fetch('/api/parts?lifecycle_state=released')])
+      const history = await historyResponse.json()
+      const partData = await partsResponse.json()
+      setInstallations(history.installations ?? [])
+      setReleasedRevisions((partData.parts ?? []).flatMap((part: { code: string; name: string; current_revision: { id: string; revision_no: string; drawing_no: string | null } | null }) => part.current_revision ? [{ id: part.current_revision.id, label: `${part.code} ${part.name} V${part.current_revision.revision_no}${part.current_revision.drawing_no ? ` · ${part.current_revision.drawing_no}` : ''}` }] : []))
+    } catch {
+      setInstallations([])
     }
   }, [])
 
@@ -249,7 +278,46 @@ export default function EquipmentView() {
     setDetailOpen(true)
     setParts([])
     fetchParts(eq.id)
-  }, [fetchParts])
+    fetchInstallations(eq.id)
+  }, [fetchInstallations, fetchParts])
+
+  const refreshInstallations = useCallback(async () => {
+    if (!detailTarget) return
+    await Promise.all([fetchParts(detailTarget.id), fetchInstallations(detailTarget.id), fetchEquipment()])
+  }, [detailTarget, fetchEquipment, fetchInstallations, fetchParts])
+
+  const handleInstall = useCallback(async () => {
+    if (!detailTarget || !selectedRevisionId) return
+    try {
+      const response = await fetch(`/api/equipment/${detailTarget.id}/installations`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ part_revision_id: selectedRevisionId, installed_at: installationDate || undefined }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || '装配失败')
+      setSelectedRevisionId('')
+      setInstallationDate('')
+      await refreshInstallations()
+    } catch (installError) {
+      setActionError(installError instanceof Error ? installError.message : '装配失败')
+    }
+  }, [detailTarget, installationDate, refreshInstallations, selectedRevisionId])
+
+  const handleRemoveInstallation = useCallback(async () => {
+    if (!detailTarget || !removalTarget) return
+    try {
+      const response = await fetch(`/api/equipment/${detailTarget.id}/installations`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ installation_id: removalTarget.id }),
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || '拆卸失败')
+      setRemovalTarget(null)
+      await refreshInstallations()
+    } catch (removeError) {
+      setActionError(removeError instanceof Error ? removeError.message : '拆卸失败')
+    }
+  }, [detailTarget, refreshInstallations, removalTarget])
 
   // Open delete confirm
   const handleDeleteClick = useCallback((eq: Equipment, e: React.MouseEvent) => {
@@ -598,6 +666,7 @@ export default function EquipmentView() {
                         <TableRow className="hover:bg-transparent">
                           <TableHead className="w-12">序号</TableHead>
                           <TableHead>零件编码</TableHead>
+                          <TableHead>版本 / 图号</TableHead>
                           <TableHead>名称</TableHead>
                           <TableHead className="hidden sm:table-cell">类别</TableHead>
                           <TableHead className="hidden md:table-cell">规格</TableHead>
@@ -613,6 +682,9 @@ export default function EquipmentView() {
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               {p.code}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              V{p.revision_no}{p.drawing_no ? ` · ${p.drawing_no}` : ''}
                             </TableCell>
                             <TableCell className="font-medium">{p.name}</TableCell>
                             <TableCell className="hidden sm:table-cell">
@@ -637,6 +709,54 @@ export default function EquipmentView() {
                       </TableBody>
                     </Table>
                   </ScrollArea>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="flex flex-col gap-3">
+                <div>
+                  <p className="text-sm font-semibold">装配已发布版本</p>
+                  <p className="text-xs text-muted-foreground">装配同一零件的新版本时，系统会自动拆卸该零件的旧装配。</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_140px_auto]">
+                  <Select value={selectedRevisionId} onValueChange={setSelectedRevisionId}>
+                    <SelectTrigger><SelectValue placeholder="选择已发布零件版本" /></SelectTrigger>
+                    <SelectContent>
+                      {releasedRevisions.map((revision) => <SelectItem key={revision.id} value={revision.id}>{revision.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Input type="date" value={installationDate} onChange={(event) => setInstallationDate(event.target.value)} aria-label="安装日期" />
+                  <Button disabled={!selectedRevisionId} onClick={handleInstall}>装配</Button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="size-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">装拆历史</span>
+                </div>
+                {installations.length === 0 ? (
+                  <p className="rounded-md border border-dashed py-5 text-center text-sm text-muted-foreground">暂无装配历史</p>
+                ) : (
+                  <div className="flex flex-col">
+                    {installations.map((installation, index) => (
+                      <div key={installation.id} className="relative flex gap-3 pb-5 last:pb-0">
+                        {index < installations.length - 1 ? <span className="absolute left-[7px] top-4 h-full border-l border-border" /> : null}
+                        <span className={cn('relative mt-1 size-4 shrink-0 rounded-full border-2 border-background', installation.status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50')} />
+                        <div className="flex min-w-0 flex-1 items-start justify-between gap-3 rounded-md border bg-muted/20 p-3">
+                          <div className="min-w-0 text-sm">
+                            <p className="font-medium">{installation.part_revision.part.code} · {installation.part_revision.part.name} · V{installation.part_revision.revision_no}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">图号：{installation.part_revision.drawing_no ?? '—'} · 安装：{installation.installed_at.slice(0, 10)}{installation.removed_at ? ` · 拆卸：${installation.removed_at.slice(0, 10)}` : ''}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Badge variant={installation.status === 'active' ? 'default' : 'secondary'}>{installation.status === 'active' ? '装配中' : '已拆卸'}</Badge>
+                            {installation.status === 'active' ? <Button variant="outline" size="sm" onClick={() => setRemovalTarget(installation)}>拆卸</Button> : null}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -707,6 +827,15 @@ export default function EquipmentView() {
             : ''
         }
         onConfirm={handleDeleteConfirm}
+        variant="destructive"
+      />
+
+      <ConfirmDialog
+        open={Boolean(removalTarget)}
+        onOpenChange={(open) => { if (!open) setRemovalTarget(null) }}
+        title="确认拆卸零件"
+        description={removalTarget ? `确认拆卸 ${removalTarget.part_revision.part.code} 版本 ${removalTarget.part_revision.revision_no}？` : ''}
+        onConfirm={handleRemoveInstallation}
         variant="destructive"
       />
     </div>

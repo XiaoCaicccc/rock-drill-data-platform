@@ -23,6 +23,7 @@ export async function GET(
         ],
         include: {
           part: { select: { id: true, code: true, name: true, category_id: true } },
+          part_revision: { select: { id: true, revision_no: true, drawing_no: true } },
           param_item: {
             select: {
               id: true,

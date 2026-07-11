@@ -28,12 +28,6 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       if (!category) return NextResponse.json({ error: '所选类别不存在' }, { status: 400 })
       data.category = { connect: { id: body.category_id } }
     }
-    if (body.equipment_id !== undefined) {
-      if (body.equipment_id && !await db.equipment.findUnique({ where: { id: body.equipment_id } })) {
-        return NextResponse.json({ error: '所选设备不存在' }, { status: 400 })
-      }
-      data.equipment = body.equipment_id ? { connect: { id: body.equipment_id } } : { disconnect: true }
-    }
     if (body.install_date !== undefined) data.install_date = body.install_date ? new Date(body.install_date) : null
     if (body.working_hours !== undefined) data.working_hours = Number(body.working_hours) || 0
     if (body.is_active !== undefined) data.is_active = Boolean(body.is_active)

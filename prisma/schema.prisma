@@ -73,7 +73,7 @@ model equipment {
   updated_at          DateTime  @updatedAt
   created_by          String?
 
-  parts               part[]
+  installations       equipment_part_installation[]
   inspection_records  inspection_record[]
 
   @@map("equipment")
@@ -108,7 +108,6 @@ model part {
   code                String  @unique
   name                String
   category_id         String
-  equipment_id        String?
   install_date        DateTime?
   working_hours       Float   @default(0)
   current_revision_id String?
@@ -116,7 +115,6 @@ model part {
   created_by          String?
 
   category         part_category           @relation(fields: [category_id], references: [id])
-  equipment        equipment?              @relation(fields: [equipment_id], references: [id])
   data_items       inspection_data_item[]
   revisions        part_revision[]         @relation("PartRevisions")
   current_revision part_revision?          @relation("CurrentPartRevision", fields: [current_revision_id], references: [id], onDelete: SetNull)
@@ -155,6 +153,9 @@ model part_revision {
 
   part              part   @relation("PartRevisions", fields: [part_id], references: [id], onDelete: Cascade)
   current_for_parts part[] @relation("CurrentPartRevision")
+  inspection_data_items inspection_data_item[]
+  equipment_installations equipment_part_installation[]
+  report_links analysis_report_part_revision[]
 
   @@unique([part_id, revision_no])
   @@index([part_id, lifecycle_state])
@@ -235,6 +236,7 @@ model inspection_data_item {
   id             String  @id @default(cuid())
   record_id      String
   part_id        String
+  part_revision_id String? @db.Uuid
   param_item_id  String
   value_number   Float?
   value_text     String?
@@ -243,10 +245,12 @@ model inspection_data_item {
 
   record     inspection_record @relation(fields: [record_id], references: [id], onDelete: Cascade)
   part       part              @relation(fields: [part_id], references: [id])
+  part_revision part_revision? @relation(fields: [part_revision_id], references: [id])
   param_item  parameter_item    @relation(fields: [param_item_id], references: [id])
 
   @@index([record_id])
   @@index([part_id])
+  @@index([part_revision_id])
   @@index([param_item_id])
   @@map("inspection_data_item")
 }
@@ -270,6 +274,7 @@ model analysis_report {
   updated_at  DateTime @updatedAt
 
   user user? @relation(fields: [user_id], references: [id])
+  part_revision_links analysis_report_part_revision[]
 
   @@map("analysis_report")
 }
@@ -371,6 +376,39 @@ model attendance_record {
 
   @@map("attendance_record")
   @@index([created_by])
+}
+
+model equipment_part_installation {
+  id                String        @id @default(uuid()) @db.Uuid
+  equipment_id      String
+  part_revision_id  String        @db.Uuid
+  installed_at      DateTime
+  removed_at        DateTime?
+  status            String        @default("active")
+  created_by        String
+  created_at        DateTime      @default(now())
+  remark            String?
+
+  equipment     equipment     @relation(fields: [equipment_id], references: [id], onDelete: Cascade)
+  part_revision part_revision @relation(fields: [part_revision_id], references: [id], onDelete: Restrict)
+
+  @@index([equipment_id])
+  @@index([part_revision_id])
+  @@map("equipment_part_installation")
+}
+
+model analysis_report_part_revision {
+  id                String          @id @default(uuid()) @db.Uuid
+  report_id         String
+  part_revision_id  String          @db.Uuid
+  added_at          DateTime        @default(now())
+
+  report        analysis_report @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  part_revision part_revision   @relation(fields: [part_revision_id], references: [id], onDelete: Restrict)
+
+  @@unique([report_id, part_revision_id])
+  @@index([report_id])
+  @@map("analysis_report_part_revision")
 }
 
 model AuditLog {

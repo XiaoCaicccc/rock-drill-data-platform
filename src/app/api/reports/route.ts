@@ -27,6 +27,11 @@ export async function GET(request: NextRequest) {
 
   const reports = await db.analysis_report.findMany({
     where,
+    include: {
+      part_revision_links: {
+        include: { part_revision: { include: { part: { select: { code: true, name: true } } } } },
+      },
+    },
     orderBy: { created_at: 'desc' },
   })
 
@@ -39,23 +44,23 @@ export async function POST(request: NextRequest) {
   const access = await requireRole(['admin', 'quality_manager', 'engineer'])
   if (access instanceof Response) return access
   const body = await request.json()
-  const { title, type, period, summary, conclusion, author } = body
+  const { title, type, period, summary, conclusion, author, part_revision_ids = [] } = body
 
   if (!title || !type) {
     return NextResponse.json({ error: '标题和类型不能为空' }, { status: 400 })
   }
 
+  if (!Array.isArray(part_revision_ids)) return NextResponse.json({ error: '零件版本引用格式错误' }, { status: 400 })
+  const revisions = await db.part_revision.findMany({ where: { id: { in: part_revision_ids } }, select: { id: true, lifecycle_state: true } })
+  if (revisions.length !== new Set(part_revision_ids).size || revisions.some((revision) => revision.lifecycle_state !== 'released')) {
+    return NextResponse.json({ error: '报告只能引用存在且已发布的零件版本' }, { status: 400 })
+  }
   const report = await db.analysis_report.create({
     data: {
-      report_no: `BG-${Date.now()}`,
-      title,
-      type,
-      period: period || null,
-      summary: summary || null,
-      conclusion: conclusion || null,
-      author: author || '',
-      user_id: access.user.id,
+      report_no: `BG-${Date.now()}`, title, type, period: period || null, summary: summary || null, conclusion: conclusion || null, author: author || '', user_id: access.user.id,
+      part_revision_links: { create: part_revision_ids.map((part_revision_id: string) => ({ part_revision_id })) },
     },
+    include: { part_revision_links: { include: { part_revision: { include: { part: { select: { code: true, name: true } } } } } } },
   })
 
   await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'analysis_report', entityId: report.id, after: { report_no: report.report_no, title: report.title }, request })
@@ -75,7 +80,7 @@ export async function PUT(request: NextRequest) {
   if (access instanceof Response) return access
 
   const body = await request.json()
-  const { id, title, type, period, summary, conclusion, author, status } = body
+  const { id, title, type, period, summary, conclusion, author, status, part_revision_ids } = body
 
   if (!id) {
     return NextResponse.json({ error: '缺少报告 ID' }, { status: 400 })
@@ -108,9 +113,17 @@ export async function PUT(request: NextRequest) {
   if (author !== undefined) data.author = author
   if (status !== undefined) data.status = status
 
+  if (part_revision_ids !== undefined) {
+    if (!Array.isArray(part_revision_ids)) return NextResponse.json({ error: '零件版本引用格式错误' }, { status: 400 })
+    const revisions = await db.part_revision.findMany({ where: { id: { in: part_revision_ids } }, select: { id: true, lifecycle_state: true } })
+    if (revisions.length !== new Set(part_revision_ids).size || revisions.some((revision) => revision.lifecycle_state !== 'released')) {
+      return NextResponse.json({ error: '报告只能引用存在且已发布的零件版本' }, { status: 400 })
+    }
+    data.part_revision_links = { deleteMany: {}, create: part_revision_ids.map((part_revision_id: string) => ({ part_revision_id })) }
+  }
   const updated = await db.analysis_report.update({
-    where: { id },
-    data,
+    where: { id }, data,
+    include: { part_revision_links: { include: { part_revision: { include: { part: { select: { code: true, name: true } } } } } } },
   })
 
   await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'analysis_report', entityId: id, before: { status: existing.status, title: existing.title }, after: { status: updated.status, title: updated.title }, request })

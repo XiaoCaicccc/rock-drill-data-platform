@@ -65,6 +65,7 @@ interface InspectionRecord {
   innerDefect: string | null
   result: string
   remark: string | null
+  revision_no: string | null
 }
 
 interface Pagination {
@@ -154,8 +155,23 @@ export default function LedgerView() {
       const res = await fetch(`/api/inspections?${params.toString()}`)
       if (!res.ok) throw new Error('获取记录失败')
       const json = await res.json()
-      setRecords(json.data || [])
-      setPagination(json.pagination || { page: 1, pageSize: PAGE_SIZE, total: 0, totalPages: 0 })
+      const normalized = (json.records ?? []).map((record: Record<string, unknown>) => {
+        const version = (record.part_versions as Array<{ code: string; name: string; revision_no: string | null }> | undefined)?.[0]
+        return {
+          id: record.id as string,
+          recordNo: record.record_no as string,
+          part: { id: '', code: version?.code ?? '—', name: version?.name ?? '历史零件', category: { id: '', name: '—', code: '' } },
+          revision_no: version?.revision_no ?? null,
+          batchNo: record.batch_no as string | null,
+          inspector: record.inspector as string,
+          inspectionDate: record.inspection_date as string,
+          hardness: null, dimensionA: null, dimensionB: null, weight: null, surfaceQuality: null, innerDefect: null,
+          result: record.overall_result as string,
+          remark: record.remark as string | null,
+        }
+      })
+      setRecords(normalized)
+      setPagination({ page: json.page ?? 1, pageSize: json.pageSize ?? PAGE_SIZE, total: json.total ?? 0, totalPages: Math.max(1, Math.ceil((json.total ?? 0) / (json.pageSize ?? PAGE_SIZE))) })
     } catch {
       toast.error('获取检测记录失败')
     } finally {
@@ -371,6 +387,7 @@ export default function LedgerView() {
                         </TableCell>
                         <TableCell className="font-medium">
                           {record.part.name}
+                          <span className="ml-1 text-xs text-muted-foreground">{record.revision_no ? `V${record.revision_no}` : '未知版本'}</span>
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground">
                           {record.part.category.name}

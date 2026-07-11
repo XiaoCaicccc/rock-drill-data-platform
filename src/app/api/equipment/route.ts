@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       include: {
         _count: {
           select: {
-            parts: true,
+            installations: { where: { status: 'active' } },
             inspection_records: true,
           },
         },
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       remark: e.remark,
       created_at: e.created_at.toISOString(),
       updated_at: e.updated_at.toISOString(),
-      part_count: e._count.parts,
+      part_count: e._count.installations,
       inspection_count: e._count.inspection_records,
     }))
 
@@ -247,11 +247,11 @@ export async function DELETE(request: NextRequest) {
     const ownership = await requireOwnershipOrAdmin(current.created_by)
     if (ownership instanceof Response) return ownership
 
-    // Check for related parts
-    const partCount = await db.part.count({ where: { equipment_id: id } })
-    if (partCount > 0) {
+    // 保留装配历史的设备不可删除。
+    const installationCount = await db.equipment_part_installation.count({ where: { equipment_id: id } })
+    if (installationCount > 0) {
       return NextResponse.json(
-        { error: `该设备下尚有 ${partCount} 个关联零件，请先删除或解绑零件` },
+        { error: `该设备下尚有 ${installationCount} 条装配历史，请先移除相关装配记录` },
         { status: 409 },
       )
     }
