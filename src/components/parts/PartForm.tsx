@@ -1,437 +1,220 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
-// ============================
-// Types
-// ============================
+export type RevisionState = 'draft' | 'reviewing' | 'released' | 'obsolete'
+export type Criticality = 'normal' | 'important' | 'critical'
 
-export interface PartFormData {
-  code: string
-  name: string
-  category_id: string
-  specification: string
-  material: string
-  supplier: string
-  equipment_id: string
-  install_date: string
-  working_hours: string
-  status: string
-  remark: string
+export interface PartRevisionSummary {
+  id: string
+  revision_no: string
+  lifecycle_state: RevisionState
+  drawing_no: string | null
+  unit: string | null
+  specification: string | null
+  material: string | null
+  supplier: string | null
+  criticality: Criticality
+  key_characteristics: unknown
+  change_summary: string | null
+  remark: string | null
 }
 
 export interface PartPayload {
   code: string
   name: string
   category_id: string
-  specification: string | null
-  material: string | null
-  supplier: string | null
   equipment_id: string | null
   install_date: string | null
   working_hours: number
-  status: string
+  is_active: boolean
+  drawing_no: string | null
+  unit: string | null
+  specification: string | null
+  material: string | null
+  supplier: string | null
+  criticality: Criticality
+  key_characteristics: Record<string, unknown> | unknown[] | null
+  change_summary: string | null
   remark: string | null
+  revision_id?: string
 }
 
-interface CategoryOption {
+type EditablePart = {
   id: string
-  name: string
   code: string
+  name: string
+  category_id: string
+  equipment_id: string | null
+  install_date: string | null
+  working_hours: number
+  is_active: boolean
+  latest_revision: PartRevisionSummary | null
 }
 
-interface EquipmentOption {
-  id: string
-  machine_no: string
-  model: string
-}
+type FormState = Omit<PartPayload, 'key_characteristics' | 'revision_id'> & { key_characteristics: string }
 
 interface PartFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  editData: {
-    id: string
-    code: string
-    name: string
-    category_id: string
-    specification: string | null
-    material: string | null
-    supplier: string | null
-    equipment_id: string | null
-    install_date: string | null
-    working_hours: number
-    status: string
-    remark: string | null
-  } | null
-  onSubmit: (data: PartPayload & { id?: string }) => Promise<void>
+  editData: EditablePart | null
+  onSubmit: (data: PartPayload, submitForReview: boolean) => Promise<void>
 }
 
-const STATUS_OPTIONS = [
-  { label: '在用', value: '在用' },
-  { label: '维修中', value: '维修中' },
-  { label: '退役', value: '退役' },
-  { label: '库存', value: '库存' },
-]
-
-const EMPTY_FORM: PartFormData = {
-  code: '',
-  name: '',
-  category_id: '',
-  specification: '',
-  material: '',
-  supplier: '',
-  equipment_id: '',
-  install_date: '',
-  working_hours: '0',
-  status: '在用',
-  remark: '',
+const EMPTY_FORM: FormState = {
+  code: '', name: '', category_id: '', equipment_id: null, install_date: null, working_hours: 0, is_active: true,
+  drawing_no: null, unit: '件', specification: null, material: null, supplier: null, criticality: 'normal',
+  key_characteristics: '', change_summary: null, remark: null,
 }
-
-// ============================
-// Component
-// ============================
 
 export function PartForm({ open, onOpenChange, editData, onSubmit }: PartFormProps) {
-  const [form, setForm] = useState<PartFormData>(EMPTY_FORM)
+  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [categories, setCategories] = useState<{ id: string; name: string; code: string }[]>([])
+  const [equipment, setEquipment] = useState<{ id: string; machine_no: string; model: string }[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Dropdown data
-  const [categories, setCategories] = useState<CategoryOption[]>([])
-  const [equipmentList, setEquipmentList] = useState<EquipmentOption[]>([])
+  const revision = editData?.latest_revision ?? null
+  const isDraft = revision?.lifecycle_state === 'draft'
+  const versionReadOnly = Boolean(revision && !isDraft)
 
-  const isEdit = editData !== null
-
-  // Fetch categories & equipment for dropdowns
   useEffect(() => {
     if (!open) return
     let cancelled = false
-
-    async function fetchOptions() {
-      try {
-        const [catRes, eqRes] = await Promise.all([
-          fetch('/api/categories').then((r) => r.json()),
-          fetch('/api/equipment').then((r) => r.json()),
-        ])
-        if (!cancelled) {
-          setCategories((catRes.categories ?? []).map((c: { id: string; name: string; code: string }) => ({
-            id: c.id,
-            name: c.name,
-            code: c.code,
-          })))
-          setEquipmentList((eqRes.equipment ?? []).map((e: { id: string; machine_no: string; model: string }) => ({
-            id: e.id,
-            machine_no: e.machine_no,
-            model: e.model,
-          })))
-        }
-      } catch {
-        // silently fail — dropdowns will be empty
-      }
-    }
-
-    fetchOptions()
+    Promise.all([fetch('/api/categories').then((response) => response.json()), fetch('/api/equipment').then((response) => response.json())])
+      .then(([categoryJson, equipmentJson]) => {
+        if (cancelled) return
+        setCategories(categoryJson.categories ?? [])
+        setEquipment(equipmentJson.equipment ?? [])
+      })
+      .catch(() => undefined)
     return () => { cancelled = true }
   }, [open])
 
-  // Populate form when editing
   useEffect(() => {
-    if (open) {
-      if (editData) {
-        setForm({
-          code: editData.code,
-          name: editData.name,
-          category_id: editData.category_id,
-          specification: editData.specification ?? '',
-          material: editData.material ?? '',
-          supplier: editData.supplier ?? '',
-          equipment_id: editData.equipment_id ?? '',
-          install_date: editData.install_date ?? '',
-          working_hours: String(editData.working_hours),
-          status: editData.status,
-          remark: editData.remark ?? '',
-        })
-      } else {
-        setForm(EMPTY_FORM)
+    if (!open) return
+    if (!editData) {
+      setForm(EMPTY_FORM)
+    } else {
+      setForm({
+        code: editData.code,
+        name: editData.name,
+        category_id: editData.category_id,
+        equipment_id: editData.equipment_id,
+        install_date: editData.install_date,
+        working_hours: editData.working_hours,
+        is_active: editData.is_active,
+        drawing_no: revision?.drawing_no ?? null,
+        unit: revision?.unit ?? '件',
+        specification: revision?.specification ?? null,
+        material: revision?.material ?? null,
+        supplier: revision?.supplier ?? null,
+        criticality: revision?.criticality ?? 'normal',
+        key_characteristics: revision?.key_characteristics ? JSON.stringify(revision.key_characteristics, null, 2) : '',
+        change_summary: revision?.change_summary ?? null,
+        remark: revision?.remark ?? null,
+      })
+    }
+    setError(null)
+  }, [editData, open, revision])
+
+  const update = useCallback((field: keyof FormState, value: FormState[keyof FormState]) => {
+    setForm((previous) => ({ ...previous, [field]: value }))
+    setError(null)
+  }, [])
+
+  const submit = useCallback(async (submitForReview: boolean) => {
+    if (!form.code.trim() || !form.name.trim() || !form.category_id) {
+      setError('请填写零件编号、名称并选择类别')
+      return
+    }
+    let keyCharacteristics: Record<string, unknown> | unknown[] | null = null
+    if (form.key_characteristics.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(form.key_characteristics)
+        if (!parsed || typeof parsed !== 'object') throw new Error()
+        keyCharacteristics = parsed as Record<string, unknown> | unknown[]
+      } catch {
+        setError('关键特性必须是合法的 JSON 对象或数组')
+        return
       }
-      setError(null)
     }
-  }, [open, editData])
-
-  const handleChange = useCallback(
-    (field: keyof PartFormData, value: string) => {
-      setForm((prev) => ({ ...prev, [field]: value }))
-      setError(null)
-    },
-    [],
-  )
-
-  const handleSubmit = useCallback(async () => {
-    if (!form.code.trim()) {
-      setError('零件编号不能为空')
-      return
-    }
-    if (!form.name.trim()) {
-      setError('零件名称不能为空')
-      return
-    }
-    if (!form.category_id) {
-      setError('请选择零件类别')
-      return
-    }
-
-    const payload: PartPayload & { id?: string } = {
-      code: form.code.trim(),
-      name: form.name.trim(),
-      category_id: form.category_id,
-      specification: form.specification.trim() || null,
-      material: form.material.trim() || null,
-      supplier: form.supplier.trim() || null,
-      equipment_id: form.equipment_id || null,
-      install_date: form.install_date || null,
-      working_hours: parseFloat(form.working_hours) || 0,
-      status: form.status,
-      remark: form.remark.trim() || null,
-    }
-
-    if (isEdit && editData) {
-      payload.id = editData.id
-    }
-
     try {
       setSubmitting(true)
-      await onSubmit(payload)
+      await onSubmit({
+        ...form,
+        code: form.code.trim(), name: form.name.trim(),
+        drawing_no: form.drawing_no?.trim() || null,
+        unit: form.unit?.trim() || null,
+        specification: form.specification?.trim() || null,
+        material: form.material?.trim() || null,
+        supplier: form.supplier?.trim() || null,
+        change_summary: form.change_summary?.trim() || null,
+        remark: form.remark?.trim() || null,
+        key_characteristics: keyCharacteristics,
+        revision_id: revision?.id,
+      }, submitForReview)
       onOpenChange(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : '操作失败')
     } finally {
       setSubmitting(false)
     }
-  }, [form, isEdit, editData, onSubmit, onOpenChange])
+  }, [form, onOpenChange, onSubmit, revision?.id])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] sm:max-w-xl">
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? '编辑零件' : '新建零件'}</DialogTitle>
-          <DialogDescription>
-            {isEdit ? '修改零件档案信息' : '填写零件信息以创建新的零件档案（一件一档）'}
-          </DialogDescription>
+          <DialogTitle>{editData ? '编辑零件主数据' : '新建零件主数据'}</DialogTitle>
+          <DialogDescription>{editData ? '已发布版本的技术字段只读；如需变更请创建升版草稿。' : '创建后将生成版本号为 01 的草稿。'}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          {/* Row 1: code + name */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="part-code">
-                零件编号 <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="part-code"
-                placeholder="如 DRILL-001"
-                value={form.code}
-                onChange={(e) => handleChange('code', e.target.value)}
-                disabled={isEdit}
-                className="font-mono text-sm"
-              />
-              {isEdit && (
-                <p className="text-xs text-muted-foreground">编号创建后不可修改</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="part-name">
-                零件名称 <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="part-name"
-                placeholder="如 钻头组件"
-                value={form.name}
-                onChange={(e) => handleChange('name', e.target.value)}
-                className="text-sm"
-              />
-            </div>
+        <section className="flex flex-col gap-4">
+          <p className="text-sm font-semibold">主数据</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="零件编号 *"><Input value={form.code} disabled={Boolean(editData)} onChange={(event) => update('code', event.target.value)} /></Field>
+            <Field label="零件名称 *"><Input value={form.name} onChange={(event) => update('name', event.target.value)} /></Field>
+            <Field label="零件类别 *"><Select value={form.category_id} onValueChange={(value) => update('category_id', value)}><SelectTrigger><SelectValue placeholder="请选择类别" /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.code} {category.name}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="关联设备"><Select value={form.equipment_id ?? '__none__'} onValueChange={(value) => update('equipment_id', value === '__none__' ? null : value)}><SelectTrigger><SelectValue placeholder="无关联设备" /></SelectTrigger><SelectContent><SelectItem value="__none__">无关联设备</SelectItem>{equipment.map((item) => <SelectItem key={item.id} value={item.id}>{item.machine_no} {item.model}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="安装日期"><Input type="date" value={form.install_date ?? ''} onChange={(event) => update('install_date', event.target.value || null)} /></Field>
+            <Field label="累计工时 (h)"><Input type="number" min="0" value={form.working_hours} onChange={(event) => update('working_hours', Number(event.target.value) || 0)} /></Field>
           </div>
+        </section>
 
-          {/* Row 2: category + status */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>
-                零件类别 <span className="text-destructive">*</span>
-              </Label>
-              <Select
-                value={form.category_id}
-                onValueChange={(v) => handleChange('category_id', v)}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="请选择类别" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      <span className="font-mono text-xs text-muted-foreground mr-1.5">{cat.code}</span>
-                      {cat.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>状态</Label>
-              <Select
-                value={form.status}
-                onValueChange={(v) => handleChange('status', v)}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <section className="mt-2 flex flex-col gap-4 rounded-lg border bg-muted/20 p-4">
+          <div><p className="text-sm font-semibold">版本数据 {revision ? `· ${revision.revision_no} 版` : '· 01 版草稿'}</p><p className="text-xs text-muted-foreground">{versionReadOnly ? '当前版本已发布或已进入评审，不可编辑。' : '技术字段随版本受控。'}</p></div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="图号"><Input value={form.drawing_no ?? ''} disabled={versionReadOnly} onChange={(event) => update('drawing_no', event.target.value || null)} /></Field>
+            <Field label="单位"><Input value={form.unit ?? ''} disabled={versionReadOnly} onChange={(event) => update('unit', event.target.value || null)} /></Field>
+            <Field label="规格"><Input value={form.specification ?? ''} disabled={versionReadOnly} onChange={(event) => update('specification', event.target.value || null)} /></Field>
+            <Field label="材质"><Input value={form.material ?? ''} disabled={versionReadOnly} onChange={(event) => update('material', event.target.value || null)} /></Field>
+            <Field label="供应商"><Input value={form.supplier ?? ''} disabled={versionReadOnly} onChange={(event) => update('supplier', event.target.value || null)} /></Field>
+            <Field label="关键性"><Select value={form.criticality} disabled={versionReadOnly} onValueChange={(value) => update('criticality', value as Criticality)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="normal">一般</SelectItem><SelectItem value="important">重要</SelectItem><SelectItem value="critical">关键</SelectItem></SelectContent></Select></Field>
           </div>
+          <Field label="关键特性（JSON）"><Textarea rows={3} value={form.key_characteristics} disabled={versionReadOnly} placeholder={'例如 {"尺寸":"90±1mm","需全检":true}'} onChange={(event) => update('key_characteristics', event.target.value)} /></Field>
+          <Field label="变更说明"><Textarea rows={2} value={form.change_summary ?? ''} disabled={versionReadOnly} onChange={(event) => update('change_summary', event.target.value || null)} /></Field>
+          <Field label="版本备注"><Textarea rows={2} value={form.remark ?? ''} disabled={versionReadOnly} onChange={(event) => update('remark', event.target.value || null)} /></Field>
+        </section>
 
-          {/* Row 3: specification + material */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="part-spec">规格</Label>
-              <Input
-                id="part-spec"
-                placeholder="如 115mm"
-                value={form.specification}
-                onChange={(e) => handleChange('specification', e.target.value)}
-                className="text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="part-material">材质</Label>
-              <Input
-                id="part-material"
-                placeholder="如 硬质合金"
-                value={form.material}
-                onChange={(e) => handleChange('material', e.target.value)}
-                className="text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Row 4: supplier + equipment */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="part-supplier">供应商</Label>
-              <Input
-                id="part-supplier"
-                placeholder="如 山特维克"
-                value={form.supplier}
-                onChange={(e) => handleChange('supplier', e.target.value)}
-                className="text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>关联设备</Label>
-              <Select
-                value={form.equipment_id || '__none__'}
-                onValueChange={(v) => handleChange('equipment_id', v === '__none__' ? '' : v)}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="无关联设备" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">无关联设备</SelectItem>
-                  {equipmentList.map((eq) => (
-                    <SelectItem key={eq.id} value={eq.id}>
-                      <span className="font-mono text-xs text-muted-foreground mr-1.5">{eq.machine_no}</span>
-                      {eq.model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Row 5: install_date + working_hours */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="part-install-date">安装日期</Label>
-              <Input
-                id="part-install-date"
-                type="date"
-                value={form.install_date}
-                onChange={(e) => handleChange('install_date', e.target.value)}
-                className="text-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="part-hours">累计工时 (h)</Label>
-              <Input
-                id="part-hours"
-                type="number"
-                min="0"
-                step="0.1"
-                value={form.working_hours}
-                onChange={(e) => handleChange('working_hours', e.target.value)}
-                className="font-mono text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Row 6: remark */}
-          <div className="space-y-1.5">
-            <Label htmlFor="part-remark">备注</Label>
-            <Textarea
-              id="part-remark"
-              placeholder="可选，填写零件相关备注信息..."
-              value={form.remark}
-              onChange={(e) => handleChange('remark', e.target.value)}
-              rows={2}
-              className="text-sm"
-            />
-          </div>
-
-          {/* Error */}
-          {error && (
-            <p className="text-sm font-medium text-destructive">{error}</p>
-          )}
-        </div>
-
+        {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-          >
-            取消
-          </Button>
-          <Button onClick={handleSubmit} disabled={submitting} className="gap-1.5">
-            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isEdit ? '保存修改' : '创建零件'}
-          </Button>
+          <Button variant="outline" disabled={submitting} onClick={() => onOpenChange(false)}>取消</Button>
+          {isDraft ? <Button variant="outline" disabled={submitting} onClick={() => submit(true)}>提交评审</Button> : null}
+          <Button disabled={submitting} onClick={() => submit(false)}>{submitting ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}{editData ? '保存主数据' : '创建零件'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="flex flex-col gap-1.5"><Label>{label}</Label>{children}</div>
 }

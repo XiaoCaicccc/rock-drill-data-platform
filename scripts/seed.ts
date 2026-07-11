@@ -524,7 +524,8 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
     prisma.inspection_record.deleteMany(),       // ④
     prisma.parameter_item.deleteMany(),          // ⑤
     prisma.parameter_template.deleteMany(),      // ⑥
-    prisma.part.deleteMany(),                    // ⑦
+    prisma.part_revision.deleteMany(),           // ⑦
+    prisma.part.deleteMany(),                    // ⑧
     prisma.document.deleteMany(),                // ⑧
     prisma.analysis_report.deleteMany(),         // ⑨
     prisma.task.deleteMany(),                    // ⑩
@@ -644,15 +645,66 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
     name,
     category_id: catMap.get(catCode)!.id,
     equipment_id: eqByIdx[eqIdx]?.id ?? null,
-    specification: spec,
-    material,
-    supplier,
     install_date: new Date('2024-06-01'),
     working_hours: wh,
-    status: '在用',
-    remark: null,
+    is_active: true,
+    created_by: engineerUser.id,
+    revision: { spec, material, supplier },
   }))
-  await prisma.part.createMany({ data: partsData })
+  for (const partData of partsData) {
+    const { revision, ...part } = partData
+    const createdPart = await prisma.part.create({ data: part })
+    const createdRevision = await prisma.part_revision.create({
+      data: {
+        part_id: createdPart.id,
+        revision_no: '01',
+        revision_seq: 1,
+        lifecycle_state: 'released',
+        drawing_no: `DWG-${createdPart.code}-01`,
+        unit: '件',
+        specification: revision.spec,
+        material: revision.material,
+        supplier: revision.supplier,
+        criticality: createdPart.code === 'ZT-001' ? 'important' : 'normal',
+        key_characteristics: createdPart.code === 'ZT-001'
+          ? { dimensions: ['外径', '总长度'], hardness: 'HRC 40-43', inspection_required: true }
+          : undefined,
+        change_summary: '种子数据首版发布',
+        effective_from: new Date('2024-06-01'),
+        released_at: new Date('2024-06-01'),
+        released_by: engineerUser.id,
+        created_by: engineerUser.id,
+      },
+    })
+    await prisma.part.update({
+      where: { id: createdPart.id },
+      data: { current_revision_id: createdRevision.id },
+    })
+  }
+
+  // 额外的草稿版本样例：用于演示“已发布版本不可编辑，只能升版”。
+  const draftSource = await prisma.part.findUnique({
+    where: { code: 'HS-001' },
+    include: { current_revision: true },
+  })
+  if (draftSource?.current_revision) {
+    await prisma.part_revision.create({
+      data: {
+        part_id: draftSource.id,
+        revision_no: '02',
+        revision_seq: 2,
+        lifecycle_state: 'draft',
+        unit: draftSource.current_revision.unit,
+        specification: draftSource.current_revision.specification,
+        material: draftSource.current_revision.material,
+        supplier: draftSource.current_revision.supplier,
+        criticality: draftSource.current_revision.criticality,
+        key_characteristics: draftSource.current_revision.key_characteristics ?? undefined,
+        change_summary: '种子数据升版草稿样例',
+        created_by: engineerUser.id,
+      },
+    })
+  }
   const parts = await prisma.part.findMany()
   counts.part = parts.length
 

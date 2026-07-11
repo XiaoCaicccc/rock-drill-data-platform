@@ -15,6 +15,19 @@ enum UserRole {
   viewer
 }
 
+enum PartLifecycleState {
+  draft
+  reviewing
+  released
+  obsolete
+}
+
+enum PartCriticality {
+  normal
+  important
+  critical
+}
+
 // ============================================================
 // ⓪ user — 用户
 // ============================================================
@@ -91,26 +104,61 @@ model part_category {
 // ============================================================
 
 model part {
-  id            String  @id @default(cuid())
-  code          String  @unique
-  name          String
-  category_id   String
-  specification String?
-  material      String?
-  supplier      String?
-  equipment_id  String?
-  install_date  DateTime?
-  working_hours Float   @default(0)
-  status        String  @default("在用")
-  remark        String?
-  created_by    String?
+  id                  String  @id @default(cuid())
+  code                String  @unique
+  name                String
+  category_id         String
+  equipment_id        String?
+  install_date        DateTime?
+  working_hours       Float   @default(0)
+  current_revision_id String?
+  is_active           Boolean @default(true)
+  created_by          String?
 
-  category      part_category @relation(fields: [category_id], references: [id])
-  equipment     equipment?    @relation(fields: [equipment_id], references: [id])
-  data_items    inspection_data_item[]
+  category         part_category           @relation(fields: [category_id], references: [id])
+  equipment        equipment?              @relation(fields: [equipment_id], references: [id])
+  data_items       inspection_data_item[]
+  revisions        part_revision[]         @relation("PartRevisions")
+  current_revision part_revision?          @relation("CurrentPartRevision", fields: [current_revision_id], references: [id], onDelete: SetNull)
 
   @@map("part")
   @@index([created_by])
+  @@index([current_revision_id])
+}
+
+// ============================================================
+// ④ part_revision — 零件受控版本
+// ============================================================
+
+model part_revision {
+  id                  String             @id @default(uuid()) @db.Uuid
+  part_id             String
+  revision_no         String
+  revision_seq        Int
+  lifecycle_state     PartLifecycleState @default(draft)
+  drawing_no          String?            @unique
+  unit                String?
+  specification       String?
+  material            String?
+  supplier            String?
+  criticality         PartCriticality    @default(normal)
+  key_characteristics Json?
+  change_summary      String?
+  effective_from      DateTime?
+  effective_to        DateTime?
+  released_at         DateTime?
+  released_by         String?
+  created_by          String
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  remark              String?
+
+  part              part   @relation("PartRevisions", fields: [part_id], references: [id], onDelete: Cascade)
+  current_for_parts part[] @relation("CurrentPartRevision")
+
+  @@unique([part_id, revision_no])
+  @@index([part_id, lifecycle_state])
+  @@map("part_revision")
 }
 
 // ============================================================

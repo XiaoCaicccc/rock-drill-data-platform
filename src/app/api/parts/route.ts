@@ -1,281 +1,187 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { PartLifecycleState, Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { Prisma } from '@prisma/client'
 import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
 
-// ============================================================
-// GET — list parts with filters
-// ============================================================
+function asOptionalText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
 
+function asKeyCharacteristics(value: unknown): Prisma.InputJsonValue | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value !== 'object') throw new Error('关键特性必须为 JSON 对象或数组')
+  return value as Prisma.InputJsonValue
+}
+
+const CRITICALITIES = ['normal', 'important', 'critical'] as const
+
+// GET — 返回主数据、当前已发布版本及最新版本摘要。
 export async function GET(request: NextRequest) {
   try {
     const access = await requireAuth()
     if (access instanceof Response) return access
-    const { searchParams } = request.nextUrl
-    const keyword = searchParams.get('keyword')?.trim() ?? ''
-    const status = searchParams.get('status')?.trim() ?? ''
-    const category_id = searchParams.get('category_id')?.trim() ?? ''
 
+    const { searchParams } = request.nextUrl
+    const keyword = searchParams.get('keyword')?.trim()
+    const lifecycleState = searchParams.get('lifecycle_state')?.trim()
+    const categoryId = searchParams.get('category_id')?.trim()
     const where: Prisma.partWhereInput = applyDataScope(access, {})
 
     if (keyword) {
       where.OR = [
-        { code: { contains: keyword } },
-        { name: { contains: keyword } },
-        { specification: { contains: keyword } },
-        { material: { contains: keyword } },
-        { supplier: { contains: keyword } },
-        { remark: { contains: keyword } },
+        { code: { contains: keyword, mode: 'insensitive' } },
+        { name: { contains: keyword, mode: 'insensitive' } },
+        { current_revision: { is: { drawing_no: { contains: keyword, mode: 'insensitive' } } } },
+        { current_revision: { is: { specification: { contains: keyword, mode: 'insensitive' } } } },
       ]
     }
-
-    if (status) {
-      where.status = status
+    if (categoryId) where.category_id = categoryId
+    if (lifecycleState && Object.values(PartLifecycleState).includes(lifecycleState as PartLifecycleState)) {
+      where.current_revision = { is: { lifecycle_state: lifecycleState as PartLifecycleState } }
     }
 
-    if (category_id) {
-      where.category_id = category_id
-    }
-
-    const list = await db.part.findMany({
+    const parts = await db.part.findMany({
       where,
       include: {
         category: { select: { id: true, name: true, code: true } },
         equipment: { select: { id: true, machine_no: true, model: true } },
-        _count: {
-          select: { data_items: true },
-        },
+        current_revision: true,
+        revisions: { orderBy: { revision_seq: 'desc' }, take: 1 },
+        _count: { select: { data_items: true } },
       },
       orderBy: { code: 'asc' },
     })
 
-    const parts = list.map((p) => ({
-      id: p.id,
-      code: p.code,
-      name: p.name,
-      category_id: p.category_id,
-      category_name: p.category.name,
-      category_code: p.category.code,
-      specification: p.specification,
-      material: p.material,
-      supplier: p.supplier,
-      equipment_id: p.equipment_id,
-      equipment_machine_no: p.equipment?.machine_no ?? null,
-      equipment_model: p.equipment?.model ?? null,
-      install_date: p.install_date ? p.install_date.toISOString().slice(0, 10) : null,
-      working_hours: p.working_hours,
-      status: p.status,
-      remark: p.remark,
-      data_item_count: p._count.data_items,
-    }))
-
-    return NextResponse.json({ parts })
+    return NextResponse.json({
+      parts: parts.map((part) => ({
+        id: part.id,
+        code: part.code,
+        name: part.name,
+        category_id: part.category_id,
+        category_name: part.category.name,
+        category_code: part.category.code,
+        equipment_id: part.equipment_id,
+        equipment_machine_no: part.equipment?.machine_no ?? null,
+        equipment_model: part.equipment?.model ?? null,
+        install_date: part.install_date?.toISOString().slice(0, 10) ?? null,
+        working_hours: part.working_hours,
+        is_active: part.is_active,
+        current_revision: part.current_revision,
+        latest_revision: part.revisions[0] ?? null,
+        data_item_count: part._count.data_items,
+      })),
+    })
   } catch (error) {
     console.error('[GET /api/parts]', error)
     return NextResponse.json({ error: '获取零件列表失败' }, { status: 500 })
   }
 }
 
-// ============================================================
-// POST — create part
-// ============================================================
-
+// POST — 创建稳定主数据和首个草稿版本。
 export async function POST(request: NextRequest) {
   try {
     const access = await requireRole(['admin', 'quality_manager', 'engineer'])
     if (access instanceof Response) return access
     const body = await request.json()
-    const { code, name, category_id, specification, material, supplier, equipment_id, install_date, status, remark } = body
 
-    if (!code?.trim()) {
-      return NextResponse.json({ error: '零件编号不能为空' }, { status: 400 })
-    }
-    if (!name?.trim()) {
-      return NextResponse.json({ error: '零件名称不能为空' }, { status: 400 })
-    }
-    if (!category_id) {
-      return NextResponse.json({ error: '请选择零件类别' }, { status: 400 })
+    if (!asOptionalText(body.code)) return NextResponse.json({ error: '零件编号不能为空' }, { status: 400 })
+    if (!asOptionalText(body.name)) return NextResponse.json({ error: '零件名称不能为空' }, { status: 400 })
+    if (!body.category_id) return NextResponse.json({ error: '请选择零件类别' }, { status: 400 })
+    if (body.criticality && !CRITICALITIES.includes(body.criticality)) {
+      return NextResponse.json({ error: '关键性字段不合法' }, { status: 400 })
     }
 
-    // Uniqueness check
-    const existing = await db.part.findUnique({ where: { code: code.trim() } })
-    if (existing) {
-      return NextResponse.json({ error: `零件编号 "${code}" 已存在` }, { status: 409 })
+    const [existing, category] = await Promise.all([
+      db.part.findUnique({ where: { code: body.code.trim() } }),
+      db.part_category.findUnique({ where: { id: body.category_id } }),
+    ])
+    if (existing) return NextResponse.json({ error: `零件编号 "${body.code}" 已存在` }, { status: 409 })
+    if (!category) return NextResponse.json({ error: '所选类别不存在' }, { status: 400 })
+    if (body.equipment_id && !await db.equipment.findUnique({ where: { id: body.equipment_id } })) {
+      return NextResponse.json({ error: '所选设备不存在' }, { status: 400 })
     }
 
-    // Validate category exists
-    const catExists = await db.part_category.findUnique({ where: { id: category_id } })
-    if (!catExists) {
-      return NextResponse.json({ error: '所选类别不存在' }, { status: 400 })
+    let keyCharacteristics: Prisma.InputJsonValue | null
+    try {
+      keyCharacteristics = asKeyCharacteristics(body.key_characteristics)
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : '关键特性格式错误' }, { status: 400 })
     }
 
-    // Validate equipment if provided
-    if (equipment_id) {
-      const eqExists = await db.equipment.findUnique({ where: { id: equipment_id } })
-      if (!eqExists) {
-        return NextResponse.json({ error: '所选设备不存在' }, { status: 400 })
-      }
-    }
-
-    const created = await db.part.create({
-      data: {
-        code: code.trim(),
-        name: name.trim(),
-        category_id,
-        specification: specification?.trim() ?? null,
-        material: material?.trim() ?? null,
-        supplier: supplier?.trim() ?? null,
-        equipment_id: equipment_id || null,
-        install_date: install_date ? new Date(install_date) : null,
-        status: status ?? '在用',
-        remark: remark?.trim() ?? null,
-        created_by: access.user.id,
-      },
+    const created = await db.$transaction(async (tx) => {
+      const part = await tx.part.create({
+        data: {
+          code: body.code.trim(),
+          name: body.name.trim(),
+          category_id: body.category_id,
+          equipment_id: body.equipment_id || null,
+          install_date: body.install_date ? new Date(body.install_date) : null,
+          working_hours: Number(body.working_hours) || 0,
+          is_active: body.is_active !== false,
+          created_by: access.user.id,
+        },
+      })
+      const revision = await tx.part_revision.create({
+        data: {
+          part_id: part.id,
+          revision_no: '01',
+          revision_seq: 1,
+          drawing_no: asOptionalText(body.drawing_no),
+          unit: asOptionalText(body.unit),
+          specification: asOptionalText(body.specification),
+          material: asOptionalText(body.material),
+          supplier: asOptionalText(body.supplier),
+          criticality: body.criticality ?? 'normal',
+          key_characteristics: keyCharacteristics ?? undefined,
+          change_summary: asOptionalText(body.change_summary) ?? '首版草稿',
+          remark: asOptionalText(body.remark),
+          created_by: access.user.id,
+        },
+      })
+      return { part, revision }
     })
 
-    await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'part', entityId: created.id, after: { code: created.code }, request })
-    return NextResponse.json({ part: created }, { status: 201 })
+    await logAudit({
+      userId: access.user.id,
+      action: 'CREATE',
+      entityType: 'part',
+      entityId: created.part.id,
+      after: { code: created.part.code, revision_no: created.revision.revision_no },
+      request,
+    })
+    return NextResponse.json({ part: created.part, revision: created.revision }, { status: 201 })
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return NextResponse.json({ error: '零件编号或图号已存在' }, { status: 409 })
+    }
     console.error('[POST /api/parts]', error)
     return NextResponse.json({ error: '创建零件失败' }, { status: 500 })
   }
 }
 
-// ============================================================
-// PUT — update part
-// ============================================================
-
-export async function PUT(request: NextRequest) {
-  try {
-    const access = await requireRole(['admin', 'quality_manager', 'engineer'])
-    if (access instanceof Response) return access
-    const body = await request.json()
-    const { id, ...fields } = body
-
-    if (!id) {
-      return NextResponse.json({ error: '缺少零件 ID' }, { status: 400 })
-    }
-    const current = await db.part.findUnique({ where: { id } })
-    if (!current) return NextResponse.json({ error: '零件不存在' }, { status: 404 })
-    const ownership = await requireOwnershipOrAdmin(current.created_by)
-    if (ownership instanceof Response) return ownership
-
-    const data: Prisma.partUpdateInput = {}
-
-    if (fields.code !== undefined) {
-      if (!fields.code?.trim()) {
-        return NextResponse.json({ error: '零件编号不能为空' }, { status: 400 })
-      }
-      const existing = await db.part.findFirst({
-        where: { code: fields.code.trim(), id: { not: id } },
-      })
-      if (existing) {
-        return NextResponse.json(
-          { error: `零件编号 "${fields.code}" 已被其他零件使用` },
-          { status: 409 },
-        )
-      }
-      data.code = fields.code.trim()
-    }
-
-    if (fields.name !== undefined) {
-      if (!fields.name?.trim()) {
-        return NextResponse.json({ error: '零件名称不能为空' }, { status: 400 })
-      }
-      data.name = fields.name.trim()
-    }
-
-    if (fields.category_id !== undefined) {
-      if (fields.category_id) {
-        const catExists = await db.part_category.findUnique({ where: { id: fields.category_id } })
-        if (!catExists) {
-          return NextResponse.json({ error: '所选类别不存在' }, { status: 400 })
-        }
-      }
-      data.category = fields.category_id ? { connect: { id: fields.category_id } } : undefined
-    }
-
-    if (fields.specification !== undefined) {
-      data.specification = fields.specification?.trim() ?? null
-    }
-    if (fields.material !== undefined) {
-      data.material = fields.material?.trim() ?? null
-    }
-    if (fields.supplier !== undefined) {
-      data.supplier = fields.supplier?.trim() ?? null
-    }
-    if (fields.equipment_id !== undefined) {
-      if (fields.equipment_id) {
-        const eqExists = await db.equipment.findUnique({ where: { id: fields.equipment_id } })
-        if (!eqExists) {
-          return NextResponse.json({ error: '所选设备不存在' }, { status: 400 })
-        }
-      }
-      data.equipment = fields.equipment_id ? { connect: { id: fields.equipment_id } } : { disconnect: true }
-    }
-    if (fields.install_date !== undefined) {
-      data.install_date = fields.install_date ? new Date(fields.install_date) : null
-    }
-    if (fields.status !== undefined) {
-      data.status = fields.status
-    }
-    if (fields.working_hours !== undefined) {
-      data.working_hours = Number(fields.working_hours) || 0
-    }
-    if (fields.remark !== undefined) {
-      data.remark = fields.remark?.trim() ?? null
-    }
-
-    const updated = await db.part.update({ where: { id }, data })
-
-    await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'part', entityId: id, before: { code: current.code, status: current.status }, after: { code: updated.code, status: updated.status }, request })
-    return NextResponse.json({ part: updated })
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-      return NextResponse.json({ error: '零件不存在' }, { status: 404 })
-    }
-    console.error('[PUT /api/parts]', error)
-    return NextResponse.json({ error: '更新零件失败' }, { status: 500 })
-  }
-}
-
-// ============================================================
-// DELETE — remove part
-// ============================================================
-
+// DELETE — 历史检测数据存在时禁止删除。
 export async function DELETE(request: NextRequest) {
   try {
     const access = await requireRole(['admin', 'quality_manager', 'engineer'])
     if (access instanceof Response) return access
-    const { searchParams } = request.nextUrl
-    const id = searchParams.get('id')
+    const id = request.nextUrl.searchParams.get('id')
+    if (!id) return NextResponse.json({ error: '缺少零件 ID' }, { status: 400 })
 
-    if (!id) {
-      return NextResponse.json({ error: '缺少零件 ID' }, { status: 400 })
-    }
     const current = await db.part.findUnique({ where: { id } })
     if (!current) return NextResponse.json({ error: '零件不存在' }, { status: 404 })
     const ownership = await requireOwnershipOrAdmin(current.created_by)
     if (ownership instanceof Response) return ownership
 
-    // Check for related inspection data items
     const dataItemCount = await db.inspection_data_item.count({ where: { part_id: id } })
     if (dataItemCount > 0) {
-      return NextResponse.json(
-        { error: `该零件下尚有 ${dataItemCount} 条检测数据，请先删除相关检测记录` },
-        { status: 409 },
-      )
+      return NextResponse.json({ error: `该零件下尚有 ${dataItemCount} 条检测数据，不能删除` }, { status: 409 })
     }
 
     await db.part.delete({ where: { id } })
     await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'part', entityId: id, before: { code: current.code }, request })
-
     return NextResponse.json({ success: true })
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-      return NextResponse.json({ error: '零件不存在' }, { status: 404 })
-    }
     console.error('[DELETE /api/parts]', error)
     return NextResponse.json({ error: '删除零件失败' }, { status: 500 })
   }

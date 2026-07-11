@@ -32,6 +32,15 @@ export async function GET(
         category: {
           select: { name: true, code: true },
         },
+        current_revision: {
+          select: {
+            specification: true,
+            material: true,
+            supplier: true,
+            lifecycle_state: true,
+            remark: true,
+          },
+        },
       },
       orderBy: { code: 'asc' },
     })
@@ -42,13 +51,13 @@ export async function GET(
       name: p.name,
       category_name: p.category.name,
       category_code: p.category.code,
-      specification: p.specification,
-      material: p.material,
-      supplier: p.supplier,
+      specification: p.current_revision?.specification ?? null,
+      material: p.current_revision?.material ?? null,
+      supplier: p.current_revision?.supplier ?? null,
       install_date: p.install_date ? p.install_date.toISOString().slice(0, 10) : null,
       working_hours: p.working_hours,
-      status: p.status,
-      remark: p.remark,
+      status: p.current_revision?.lifecycle_state ?? 'draft',
+      remark: p.current_revision?.remark ?? null,
     }))
 
     return NextResponse.json({ parts: result })

@@ -1,54 +1,17 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import {
-  Puzzle,
-  Plus,
-  Pencil,
-  Trash2,
-  Clock,
-  Wrench,
-  Package,
-  AlertCircle,
-  Tag,
-  FileCheck2,
-  Cog,
-  Building2,
-  CalendarDays,
-} from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSession } from 'next-auth/react'
+import { AlertCircle, ChevronUp, FilePlus2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/common/PageHeader'
-import { StatCard } from '@/components/common/StatCard'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { FilterBar, type FilterItem } from '@/components/common/FilterBar'
-import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { PartForm, type PartPayload } from '@/components/parts/PartForm'
-import { cn } from '@/lib/utils'
-
-// ============================
-// Types
-// ============================
+import { EmptyState } from '@/components/common/EmptyState'
+import { FilterBar, type FilterItem } from '@/components/common/FilterBar'
+import { PartForm, type Criticality, type PartPayload, type PartRevisionSummary, type RevisionState } from '@/components/parts/PartForm'
 
 interface Part {
   id: string
@@ -57,695 +20,132 @@ interface Part {
   category_id: string
   category_name: string
   category_code: string
-  specification: string | null
-  material: string | null
-  supplier: string | null
   equipment_id: string | null
   equipment_machine_no: string | null
-  equipment_model: string | null
   install_date: string | null
   working_hours: number
-  status: string
-  remark: string | null
+  is_active: boolean
+  current_revision: PartRevisionSummary | null
+  latest_revision: PartRevisionSummary | null
   data_item_count: number
 }
 
-interface InspectionRecord {
-  id: string
-  record_no: string
-  inspector: string
-  batch_no: string | null
-  inspection_date: string
-  overall_result: string
-  remark: string | null
-  qualified_count: number
-  total_count: number
-  qualified_rate: number
-}
-
-// ============================
-// Constants
-// ============================
-
-const STATUS_FILTER_OPTIONS = [
-  { label: '在用', value: '在用' },
-  { label: '维修中', value: '维修中' },
-  { label: '退役', value: '退役' },
-  { label: '库存', value: '库存' },
-]
-
-// ============================
-// Component
-// ============================
+const STATE_LABEL: Record<RevisionState, string> = { draft: '草稿', reviewing: '评审中', released: '已发布', obsolete: '已废止' }
+const CRITICALITY_LABEL: Record<Criticality, string> = { normal: '一般', important: '重要', critical: '关键' }
+const STATE_CLASS: Record<RevisionState, string> = { draft: 'bg-slate-100 text-slate-700', reviewing: 'bg-amber-100 text-amber-800', released: 'bg-emerald-100 text-emerald-800', obsolete: 'bg-slate-200 text-slate-600' }
 
 export default function PartView() {
-  // ---- Data state ----
+  const { data: session } = useSession()
+  const userRole = (session?.user as { role?: string } | undefined)?.role
   const [parts, setParts] = useState<Part[]>([])
+  const [categories, setCategories] = useState<{ label: string; value: string }[]>([])
+  const [filters, setFilters] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState<Record<string, string>>({})
-
-  // ---- Dropdown data for filter ----
-  const [categoryOptions, setCategoryOptions] = useState<{ label: string; value: string }[]>([])
-
-  // ---- Dialogs ----
   const [formOpen, setFormOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Part | null>(null)
-  const [detailTarget, setDetailTarget] = useState<Part | null>(null)
-  const [detailOpen, setDetailOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Part | null>(null)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [releaseTarget, setReleaseTarget] = useState<Part | null>(null)
 
-  // ---- Detail: inspection history ----
-  const [inspections, setInspections] = useState<InspectionRecord[]>([])
-  const [inspectionsLoading, setInspectionsLoading] = useState(false)
+  const filterConfig: FilterItem[] = useMemo(() => [
+    { key: 'keyword', label: '关键词', type: 'input', placeholder: '编号、名称、图号或规格' },
+    { key: 'category_id', label: '类别', type: 'select', options: categories },
+    { key: 'lifecycle_state', label: '版本状态', type: 'select', options: Object.entries(STATE_LABEL).map(([value, label]) => ({ value, label })) },
+  ], [categories])
 
-  // ---- Action feedback ----
-  const [actionError, setActionError] = useState<string | null>(null)
-
-  // =====================
-  // Filter config (depends on categoryOptions)
-  // =====================
-  const filterConfig: FilterItem[] = useMemo(
-    () => [
-      {
-        key: 'keyword',
-        label: '关键词',
-        type: 'input' as const,
-        placeholder: '搜索编号、名称、规格…',
-      },
-      {
-        key: 'category_id',
-        label: '类别',
-        type: 'select' as const,
-        options: categoryOptions,
-      },
-      {
-        key: 'status',
-        label: '状态',
-        type: 'select' as const,
-        options: STATUS_FILTER_OPTIONS,
-      },
-    ],
-    [categoryOptions],
-  )
-
-  // =====================
-  // Fetch parts
-  // =====================
-  const fetchParts = useCallback(
-    async (filterValues?: Record<string, string>) => {
-      try {
-        setLoading(true)
-        setError(null)
-        const params = new URLSearchParams()
-        const f = filterValues ?? filters
-        if (f.keyword) params.set('keyword', f.keyword)
-        if (f.category_id) params.set('category_id', f.category_id)
-        if (f.status) params.set('status', f.status)
-        const qs = params.toString()
-        const url = `/api/parts${qs ? `?${qs}` : ''}`
-        const res = await fetch(url)
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          throw new Error(body.error || `HTTP ${res.status}`)
-        }
-        const json = await res.json()
-        setParts(json.parts ?? [])
-      } catch (err) {
-        setError(err instanceof Error ? err.message : '未知错误')
-      } finally {
-        setLoading(false)
-      }
-    },
-    [filters],
-  )
-
-  // =====================
-  // Fetch categories for filter dropdown
-  // =====================
-  useEffect(() => {
-    async function fetchCategories() {
-      try {
-        const res = await fetch('/api/categories')
-        const json = await res.json()
-        setCategoryOptions(
-          (json.categories ?? []).map((c: { id: string; name: string; code: string }) => ({
-            label: `${c.code} ${c.name}`,
-            value: c.id,
-          })),
-        )
-      } catch {
-        // ignore
-      }
-    }
-    fetchCategories()
-  }, [])
-
-  // Initial load
-  useEffect(() => {
-    fetchParts()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // =====================
-  // Fetch inspection history for detail
-  // =====================
-  const fetchInspections = useCallback(async (partId: string) => {
+  const fetchParts = useCallback(async (nextFilters?: Record<string, string>) => {
     try {
-      setInspectionsLoading(true)
-      // Get all data items for this part, grouped by record
-      const res = await fetch(`/api/parts?keyword=${partId}`)
-      // We need a dedicated endpoint — use a workaround: fetch categories to get the part's data_item_count
-      // Actually, for inspection history we'll query the inspection_data_items aggregated
-      // For now, use a simpler approach: fetch all records that have data items for this part
-      const recordsRes = await fetch('/api/inspection-records')
-      if (!recordsRes.ok) throw new Error()
-
-      // Since we don't have a dedicated inspection-records API yet,
-      // we'll use the data_items count from the part itself and show a simplified view.
-      // For a full implementation, we'd need /api/parts/[id]/inspections
-      setInspections([])
-    } catch {
-      setInspections([])
+      setLoading(true)
+      setError(null)
+      const params = new URLSearchParams()
+      Object.entries(nextFilters ?? filters).forEach(([key, value]) => { if (value) params.set(key, value) })
+      const response = await fetch(`/api/parts${params.size ? `?${params}` : ''}`)
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? '获取零件失败')
+      setParts(body.parts ?? [])
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : '获取零件失败')
     } finally {
-      setInspectionsLoading(false)
+      setLoading(false)
     }
+  }, [filters])
+
+  useEffect(() => { fetchParts() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetch('/api/categories').then((response) => response.json()).then((body) => {
+      setCategories((body.categories ?? []).map((category: { id: string; code: string; name: string }) => ({ value: category.id, label: `${category.code} ${category.name}` })))
+    }).catch(() => undefined)
   }, [])
 
-  // =====================
-  // Stats
-  // =====================
-  const stats = useMemo(() => {
-    const total = parts.length
-    const inUse = parts.filter((p) => p.status === '在用').length
-    const repairing = parts.filter((p) => p.status === '维修中').length
-    const retired = parts.filter((p) => p.status === '退役').length
-    const inStock = parts.filter((p) => p.status === '库存').length
-    return { total, inUse, repairing, retired, inStock }
-  }, [parts])
+  const handleSubmit = useCallback(async (payload: PartPayload, submitForReview: boolean) => {
+    if (!editTarget) {
+      const response = await fetch('/api/parts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? '创建零件失败')
+    } else {
+      const { revision_id, drawing_no, unit, specification, material, supplier, criticality, key_characteristics, change_summary, remark, ...master } = payload
+      const masterResponse = await fetch(`/api/parts/${editTarget.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(master) })
+      const masterBody = await masterResponse.json()
+      if (!masterResponse.ok) throw new Error(masterBody.error ?? '更新主数据失败')
+      if (revision_id && editTarget.latest_revision?.lifecycle_state === 'draft') {
+        const revisionResponse = await fetch(`/api/part-revisions/${revision_id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ drawing_no, unit, specification, material, supplier, criticality, key_characteristics, change_summary, remark, ...(submitForReview ? { lifecycle_state: 'reviewing' } : {}) }),
+        })
+        const revisionBody = await revisionResponse.json()
+        if (!revisionResponse.ok) throw new Error(revisionBody.error ?? '更新版本失败')
+      }
+    }
+    await fetchParts()
+  }, [editTarget, fetchParts])
 
-  // =====================
-  // Handlers
-  // =====================
-  const handleSearch = useCallback(
-    (values: Record<string, string>) => {
-      setFilters(values)
-      fetchParts(values)
-    },
-    [fetchParts],
-  )
-
-  const handleReset = useCallback(() => {
-    setFilters({})
-    fetchParts({})
+  const createRevision = useCallback(async (part: Part) => {
+    try {
+      const response = await fetch(`/api/parts/${part.id}/revisions`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? '创建升版草稿失败')
+      await fetchParts()
+    } catch (revisionError) { setError(revisionError instanceof Error ? revisionError.message : '创建升版草稿失败') }
   }, [fetchParts])
 
-  const handleCreate = useCallback(() => {
-    setEditTarget(null)
-    setActionError(null)
-    setFormOpen(true)
-  }, [])
-
-  const handleEdit = useCallback((p: Part, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setEditTarget(p)
-    setActionError(null)
-    setFormOpen(true)
-  }, [])
-
-  const handleFormSubmit = useCallback(
-    async (payload: PartPayload & { id?: string }) => {
-      const method = payload.id ? 'PUT' : 'POST'
-      const res = await fetch('/api/parts', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || `请求失败 (${res.status})`)
-      }
+  const release = useCallback(async () => {
+    const revision = releaseTarget?.latest_revision
+    if (!revision) return
+    try {
+      const response = await fetch(`/api/part-revisions/${revision.id}/release`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? '发布版本失败')
+      setReleaseTarget(null)
       await fetchParts()
-    },
-    [fetchParts],
-  )
+    } catch (releaseError) { setError(releaseError instanceof Error ? releaseError.message : '发布版本失败') }
+  }, [fetchParts, releaseTarget])
 
-  const handleDetail = useCallback((p: Part) => {
-    setDetailTarget(p)
-    setDetailOpen(true)
-    setInspections([])
-    fetchInspections(p.id)
-  }, [fetchInspections])
-
-  const handleDeleteClick = useCallback((p: Part, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setDeleteTarget(p)
-    setDeleteOpen(true)
-  }, [])
-
-  const handleDeleteConfirm = useCallback(async () => {
+  const remove = useCallback(async () => {
     if (!deleteTarget) return
     try {
-      setDeleting(true)
-      const res = await fetch(`/api/parts?id=${deleteTarget.id}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || `删除失败 (${res.status})`)
-      }
-      setDeleteOpen(false)
+      const response = await fetch(`/api/parts?id=${deleteTarget.id}`, { method: 'DELETE' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? '删除零件失败')
       setDeleteTarget(null)
       await fetchParts()
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : '删除失败')
-    } finally {
-      setDeleting(false)
-    }
+    } catch (deleteError) { setError(deleteError instanceof Error ? deleteError.message : '删除零件失败') }
   }, [deleteTarget, fetchParts])
 
-  // =====================
-  // Loading skeleton
-  // =====================
-  if (loading) {
-    return (
-      <div className="space-y-6 p-6">
-        <div className="flex items-center justify-between">
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-48" />
-            <Skeleton className="h-4 w-72" />
-          </div>
-          <Skeleton className="h-9 w-28" />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 rounded-lg" />
-          ))}
-        </div>
-        <Skeleton className="h-12 rounded-lg" />
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-14 rounded-lg" />
-        ))}
-      </div>
-    )
-  }
+  const releasedCount = parts.filter((part) => part.current_revision?.lifecycle_state === 'released').length
+  const draftCount = parts.filter((part) => part.latest_revision?.lifecycle_state === 'draft').length
 
-  // =====================
-  // Error state
-  // =====================
-  if (error) {
-    return (
-      <div className="space-y-6 p-6">
-        <PageHeader title="零件档案管理" description="实现一件一档，管理零部件基础信息和检测历史" />
-        <EmptyState
-          icon={AlertCircle}
-          title="数据加载失败"
-          description={`请求出错：${error}`}
-          action={{ label: '重新加载', onClick: () => fetchParts() }}
-        />
-      </div>
-    )
-  }
-
-  // =====================
-  // Main render
-  // =====================
-  return (
-    <div className="space-y-6 p-6">
-      {/* ====== Page Header ====== */}
-      <PageHeader
-        title="零件档案管理"
-        description="实现一件一档，管理零部件基础信息、所属设备和检测历史"
-        actions={
-          <Button onClick={handleCreate} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            新建零件
-          </Button>
-        }
-      />
-
-      {/* ====== Stat Cards ====== */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard
-          title="零件总数"
-          value={stats.total}
-          icon={Puzzle}
-          description="已登记零件"
-        />
-        <StatCard
-          title="在用"
-          value={stats.inUse}
-          icon={Wrench}
-          description="正常运行"
-          className="border-l-4 border-l-emerald-500"
-        />
-        <StatCard
-          title="维修中"
-          value={stats.repairing}
-          icon={Wrench}
-          description="维修保养"
-          className="border-l-4 border-l-orange-500"
-        />
-        <StatCard
-          title="退役"
-          value={stats.retired}
-          icon={AlertCircle}
-          description="已停用"
-          className="border-l-4 border-l-slate-400"
-        />
-        <StatCard
-          title="库存"
-          value={stats.inStock}
-          icon={Package}
-          description="待分配"
-          className="border-l-4 border-l-blue-500"
-        />
-      </div>
-
-      {/* ====== Filter Bar ====== */}
-      <FilterBar
-        filters={filterConfig}
-        onSearch={handleSearch}
-        onReset={handleReset}
-      />
-
-      {/* ====== Action Error ====== */}
-      {actionError && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {actionError}
-          <button
-            className="ml-auto text-destructive/60 hover:text-destructive"
-            onClick={() => setActionError(null)}
-          >
-            {'\u2715'}
-          </button>
-        </div>
-      )}
-
-      {/* ====== Parts Table ====== */}
-      {parts.length === 0 ? (
-        <EmptyState
-          icon={Puzzle}
-          title="暂无零件记录"
-          description={'请点击"新建零件"按钮添加第一个零件档案。'}
-          action={{ label: '新建零件', onClick: handleCreate }}
-        />
-      ) : (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-16 pl-4">序号</TableHead>
-                  <TableHead>编号</TableHead>
-                  <TableHead>名称</TableHead>
-                  <TableHead>类别</TableHead>
-                  <TableHead className="hidden md:table-cell">规格</TableHead>
-                  <TableHead className="hidden lg:table-cell">材质</TableHead>
-                  <TableHead className="hidden xl:table-cell">供应商</TableHead>
-                  <TableHead className="hidden sm:table-cell">关联设备</TableHead>
-                  <TableHead className="text-center">状态</TableHead>
-                  <TableHead className="text-center hidden lg:table-cell">检测数据</TableHead>
-                  <TableHead className="w-28 pr-4 text-center">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {parts.map((p, idx) => (
-                  <TableRow
-                    key={p.id}
-                    className="cursor-pointer group"
-                    onClick={() => handleDetail(p)}
-                  >
-                    <TableCell className="pl-4 text-muted-foreground">
-                      {idx + 1}
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-mono text-sm font-semibold">{p.code}</span>
-                    </TableCell>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        <span className="font-mono mr-1">{p.category_code}</span>
-                        {p.category_name}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden max-w-[100px] truncate text-sm text-muted-foreground md:table-cell">
-                      {p.specification ?? '—'}
-                    </TableCell>
-                    <TableCell className="hidden max-w-[80px] truncate text-sm text-muted-foreground lg:table-cell">
-                      {p.material ?? '—'}
-                    </TableCell>
-                    <TableCell className="hidden max-w-[100px] truncate text-sm text-muted-foreground xl:table-cell">
-                      {p.supplier ?? '—'}
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {p.equipment_machine_no ? (
-                        <span className="text-sm">
-                          <span className="font-mono text-muted-foreground">{p.equipment_machine_no}</span>
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <StatusBadge status={p.status} />
-                    </TableCell>
-                    <TableCell className="text-center hidden lg:table-cell">
-                      <span
-                        className={cn(
-                          'inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs font-semibold',
-                          p.data_item_count > 0
-                            ? 'bg-primary/10 text-primary'
-                            : 'bg-muted text-muted-foreground',
-                        )}
-                      >
-                        {p.data_item_count}
-                      </span>
-                    </TableCell>
-                    <TableCell className="pr-4">
-                      <div className="flex items-center justify-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={(e) => handleEdit(p, e)}
-                          title="编辑"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive"
-                          onClick={(e) => handleDeleteClick(p, e)}
-                          title="删除"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ====== Part Detail Dialog ====== */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-h-[88vh] sm:max-w-2xl">
-          {detailTarget && (
-            <>
-              <DialogHeader>
-                <div className="flex items-center gap-2">
-                  <DialogTitle className="flex items-center gap-2">
-                    <Puzzle className="h-5 w-5 text-primary" />
-                    <span className="font-mono">{detailTarget.code}</span>
-                    <span className="font-normal">— {detailTarget.name}</span>
-                  </DialogTitle>
-                  <StatusBadge status={detailTarget.status} />
-                </div>
-                <DialogDescription>
-                  <Badge variant="outline" className="mr-2 text-xs font-mono">
-                    {detailTarget.category_code}
-                  </Badge>
-                  {detailTarget.category_name}
-                </DialogDescription>
-              </DialogHeader>
-
-              {/* Basic info grid */}
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-3">
-                <InfoItem icon={Cog} label="规格" value={detailTarget.specification} />
-                <InfoItem icon={Building2} label="材质" value={detailTarget.material} />
-                <InfoItem icon={Tag} label="供应商" value={detailTarget.supplier} />
-                <InfoItem
-                  icon={Package}
-                  label="关联设备"
-                  value={
-                    detailTarget.equipment_machine_no
-                      ? `${detailTarget.equipment_machine_no} (${detailTarget.equipment_model})`
-                      : null
-                  }
-                />
-                <InfoItem
-                  icon={CalendarDays}
-                  label="安装日期"
-                  value={detailTarget.install_date}
-                />
-                <InfoItem
-                  icon={Clock}
-                  label="累计工时"
-                  value={
-                    detailTarget.working_hours > 0
-                      ? `${detailTarget.working_hours.toLocaleString()} h`
-                      : null
-                  }
-                />
-                <InfoItem
-                  icon={FileCheck2}
-                  label="检测数据条数"
-                  value={`${detailTarget.data_item_count} 条`}
-                />
-              </div>
-
-              {/* Remark */}
-              {detailTarget.remark && (
-                <div className="text-sm">
-                  <span className="font-medium text-muted-foreground">备注：</span>
-                  {detailTarget.remark}
-                </div>
-              )}
-
-              <Separator />
-
-              {/* Inspection History placeholder */}
-              <div>
-                <div className="mb-3 flex items-center gap-2">
-                  <FileCheck2 className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">历史检测记录</span>
-                  <Badge variant="secondary" className="text-xs">
-                    {detailTarget.data_item_count}
-                  </Badge>
-                </div>
-
-                {inspectionsLoading ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <Skeleton key={i} className="h-10 rounded" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed bg-muted/20 py-8 text-center">
-                    <FileCheck2 className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
-                    <p className="text-sm text-muted-foreground">
-                      检测记录将在「检测台账」模块完成后自动关联显示
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground/70">
-                      当前零件共有 {detailTarget.data_item_count} 条检测数据
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Detail footer */}
-              <div className="flex justify-end gap-2 pt-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => {
-                    setDetailOpen(false)
-                    setEditTarget(detailTarget)
-                    setFormOpen(true)
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  编辑
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => {
-                    setDetailOpen(false)
-                    setDeleteTarget(detailTarget)
-                    setDeleteOpen(true)
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  删除
-                </Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ====== Form Dialog ====== */}
-      <PartForm
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        editData={
-          editTarget
-            ? {
-                id: editTarget.id,
-                code: editTarget.code,
-                name: editTarget.name,
-                category_id: editTarget.category_id,
-                specification: editTarget.specification,
-                material: editTarget.material,
-                supplier: editTarget.supplier,
-                equipment_id: editTarget.equipment_id,
-                install_date: editTarget.install_date,
-                working_hours: editTarget.working_hours,
-                status: editTarget.status,
-                remark: editTarget.remark,
-              }
-            : null
-        }
-        onSubmit={handleFormSubmit}
-      />
-
-      {/* ====== Delete Confirm ====== */}
-      <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="确认删除零件"
-        description={
-          deleteTarget
-            ? `确定要删除零件 "${deleteTarget.code}"（${deleteTarget.name}）吗？该零件有 ${deleteTarget.data_item_count} 条检测数据，删除后不可撤销。`
-            : ''
-        }
-        onConfirm={handleDeleteConfirm}
-        variant="destructive"
-      />
-    </div>
-  )
-}
-
-// ============================
-// InfoItem sub-component
-// ============================
-
-function InfoItem({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ElementType
-  label: string
-  value: string | null | undefined
-}) {
-  return (
-    <div className="flex items-start gap-2">
-      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="truncate font-medium">{value ?? '—'}</p>
-      </div>
-    </div>
-  )
+  return <div className="flex flex-col gap-6 p-6">
+    <PageHeader title="零件主数据管理" description={`共 ${parts.length} 个零件；已发布 ${releasedCount} 个，草稿 ${draftCount} 个`} actions={<Button onClick={() => { setEditTarget(null); setFormOpen(true) }}><Plus data-icon="inline-start" />新建零件</Button>} />
+    <FilterBar filters={filterConfig} onSearch={(values) => { setFilters(values); fetchParts(values) }} onReset={() => { setFilters({}); fetchParts({}) }} />
+    {error ? <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><AlertCircle className="size-4" />{error}</div> : null}
+    {loading ? <Card><CardContent className="p-6 text-sm text-muted-foreground">正在加载零件主数据…</CardContent></Card> : null}
+    {!loading && parts.length === 0 ? <EmptyState icon={FilePlus2} title="暂无零件主数据" description="请新建零件并维护其首个版本草稿。" action={{ label: '新建零件', onClick: () => { setEditTarget(null); setFormOpen(true) } }} /> : null}
+    {!loading && parts.length > 0 ? <Card><CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>编号</TableHead><TableHead>名称</TableHead><TableHead>类别</TableHead><TableHead>版本</TableHead><TableHead>状态</TableHead><TableHead className="hidden lg:table-cell">图号</TableHead><TableHead className="hidden md:table-cell">单位</TableHead><TableHead className="hidden xl:table-cell">关键性</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{parts.map((part) => {
+      const revision = part.latest_revision ?? part.current_revision
+      return <TableRow key={part.id}><TableCell className="font-mono font-medium">{part.code}</TableCell><TableCell>{part.name}</TableCell><TableCell><Badge variant="outline">{part.category_code} {part.category_name}</Badge></TableCell><TableCell className="font-mono">{revision?.revision_no ?? '—'}</TableCell><TableCell>{revision ? <Badge className={STATE_CLASS[revision.lifecycle_state]}>{STATE_LABEL[revision.lifecycle_state]}</Badge> : <span className="text-muted-foreground">未发布</span>}</TableCell><TableCell className="hidden lg:table-cell">{revision?.drawing_no ?? '—'}</TableCell><TableCell className="hidden md:table-cell">{revision?.unit ?? '—'}</TableCell><TableCell className="hidden xl:table-cell">{revision ? CRITICALITY_LABEL[revision.criticality] : '—'}</TableCell><TableCell><div className="flex justify-end gap-1"><Button variant="ghost" size="icon" title="编辑" onClick={() => { setEditTarget(part); setFormOpen(true) }}><Pencil /></Button><Button variant="ghost" size="icon" title="升版" onClick={() => createRevision(part)} disabled={!part.current_revision}><ChevronUp /></Button>{userRole === 'admin' && revision?.lifecycle_state === 'reviewing' ? <Button variant="ghost" size="icon" title="发布" onClick={() => setReleaseTarget(part)}><FilePlus2 /></Button> : null}<Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="删除" onClick={() => setDeleteTarget(part)}><Trash2 /></Button></div></TableCell></TableRow>
+    })}</TableBody></Table></CardContent></Card> : null}
+    <PartForm open={formOpen} onOpenChange={setFormOpen} editData={editTarget} onSubmit={handleSubmit} />
+    <ConfirmDialog open={Boolean(releaseTarget)} onOpenChange={(open) => { if (!open) setReleaseTarget(null) }} title="确认发布零件版本" description={releaseTarget?.latest_revision ? `确认发布 ${releaseTarget.code} 的 ${releaseTarget.latest_revision.revision_no} 版吗？发布后将成为当前有效版本，技术字段不可再编辑。` : ''} onConfirm={release} />
+    <ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }} title="确认删除零件" description={deleteTarget ? `确认删除 ${deleteTarget.code} 吗？存在检测数据的零件无法删除。` : ''} onConfirm={remove} variant="destructive" />
+  </div>
 }
