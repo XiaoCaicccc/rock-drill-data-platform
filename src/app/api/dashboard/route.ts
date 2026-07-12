@@ -1,15 +1,36 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
-import { requireAuth } from '@/lib/permissions'
+import { requireDataScopeResource, type DataScopeType } from '@/lib/permissions'
 
 // ─── 核心查询逻辑（导出供 /api/export 复用） ───
 
-async function getDashboardData() {
+type EquipmentDashboardRow = {
+  equipmentId: string
+  machineNo: string
+  lastInspectionDate: Date
+  qualified: bigint
+  total: bigint
+}
+
+type RecentInspectionRow = {
+  id: string
+  record_no: string
+  inspector: string
+  inspection_date: Date
+  overall_result: string
+  batch_no: string | null
+  equipment: { id: string; machine_no: string; model: string } | null
+  _count: { data_items: number }
+}
+
+async function getDashboardData(scope: DataScopeType) {
   const now = new Date()
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+  const dashboardOnly = scope === 'dashboard_only'
+  const includeNonQualityTasks = scope === 'all'
 
   // ─── 并行查询 ───
   const [
@@ -20,8 +41,6 @@ async function getDashboardData() {
     lastMonthDataItems,
     monthlyTrendRaw,
     categoryAgg,
-    equipmentAgg,
-    recentRecords,
   ] = await Promise.all([
     // 1. 检测总量
     db.inspection_record.count(),
@@ -89,45 +108,41 @@ async function getDashboardData() {
       ORDER BY pc.code ASC
     `),
 
-    // 8. 设备健康度（每台设备最近一次检测的合格率）
-    db.$queryRaw<
-      {
-        equipmentId: string
-        machineNo: string
-        lastInspectionDate: Date
-        qualified: bigint
-        total: bigint
-      }[]
-    >(Prisma.sql`
-      SELECT
-        e.id AS "equipmentId",
-        e.machine_no AS "machineNo",
-        r.inspection_date AS "lastInspectionDate",
-        SUM(CASE WHEN di.is_qualified = true THEN 1 ELSE 0 END) AS qualified,
-        COUNT(*) AS total
-      FROM equipment e
-      JOIN inspection_record r ON r.equipment_id = e.id
-      JOIN inspection_data_item di ON di.record_id = r.id
-      WHERE r.id = (
-        SELECT r2.id FROM inspection_record r2
-        WHERE r2.equipment_id = e.id
-        ORDER BY r2.inspection_date DESC
-        LIMIT 1
-      )
-      GROUP BY e.id, e.machine_no, r.inspection_date
-      ORDER BY e.machine_no ASC
-    `),
-
-    // 9. 最近 8 条检测记录
-    db.inspection_record.findMany({
-      take: 8,
-      orderBy: { inspection_date: 'desc' },
-      include: {
-        equipment: { select: { id: true, machine_no: true, model: true } },
-        _count: { select: { data_items: true } },
-      },
-    }),
   ])
+
+  // dashboard_only 仅返回统计，避免查询设备标识和检测明细。
+  const equipmentAgg: EquipmentDashboardRow[] = dashboardOnly
+    ? []
+    : await db.$queryRaw<EquipmentDashboardRow[]>(Prisma.sql`
+        SELECT
+          e.id AS "equipmentId",
+          e.machine_no AS "machineNo",
+          r.inspection_date AS "lastInspectionDate",
+          SUM(CASE WHEN di.is_qualified = true THEN 1 ELSE 0 END) AS qualified,
+          COUNT(*) AS total
+        FROM equipment e
+        JOIN inspection_record r ON r.equipment_id = e.id
+        JOIN inspection_data_item di ON di.record_id = r.id
+        WHERE r.id = (
+          SELECT r2.id FROM inspection_record r2
+          WHERE r2.equipment_id = e.id
+          ORDER BY r2.inspection_date DESC
+          LIMIT 1
+        )
+        GROUP BY e.id, e.machine_no, r.inspection_date
+        ORDER BY e.machine_no ASC
+      `)
+
+  const recentRecords: RecentInspectionRow[] = dashboardOnly
+    ? []
+    : await db.inspection_record.findMany({
+        take: 8,
+        orderBy: { inspection_date: 'desc' },
+        include: {
+          equipment: { select: { id: true, machine_no: true, model: true } },
+          _count: { select: { data_items: true } },
+        },
+      })
 
   // ─── 计算合格率辅助函数 ───
   const calcRate = (items: { is_qualified: boolean | null; _count: { is_qualified: number } }[]) => {
@@ -148,10 +163,10 @@ async function getDashboardData() {
     ? Math.round((thisMonthQualifiedRate - lastMonthQualifiedRate) * 10) / 10
     : 0
 
-  // ─── 3. 待办事项数 ───
-  const pendingTasks = await db.task.count({
-    where: { status: { in: ['待办', '进行中'] } },
-  })
+  // 待办事项不属于当前 Quality Scope，仅 admin 可查询。
+  const pendingTasks = includeNonQualityTasks
+    ? await db.task.count({ where: { status: { in: ['待办', '进行中'] } } })
+    : 0
 
   // ─── 4. 月度趋势格式化 ───
   const monthlyTrend = (monthlyTrendRaw as { month: string; count: bigint; qualified: bigint }[]).map(r => ({
@@ -168,7 +183,7 @@ async function getDashboardData() {
   }))
 
   // ─── 6. 设备健康度 ───
-  const equipmentHealth = (equipmentAgg as { equipmentId: string; machineNo: string; lastInspectionDate: Date; qualified: bigint; total: bigint }[]).map(r => ({
+  const equipmentHealth = equipmentAgg.map(r => ({
     equipmentId: r.equipmentId,
     machineNo: r.machineNo,
     lastInspectionDate: r.lastInspectionDate instanceof Date ? r.lastInspectionDate.toISOString() : String(r.lastInspectionDate),
@@ -202,10 +217,10 @@ async function getDashboardData() {
 }
 
 export async function GET() {
-  const access = await requireAuth()
+  const access = await requireDataScopeResource('dashboard')
   if (access instanceof Response) return access
   try {
-    const data = await getDashboardData()
+    const data = await getDashboardData(access.scope)
     return NextResponse.json(data)
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '获取仪表盘数据失败'

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { requireDataScopeResource, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
 
 // ─── GET: 分析报告列表（按角色过滤） ───
 
 export async function GET(request: NextRequest) {
-  const access = await requireAuth()
+  const access = await requireDataScopeResource('reports')
   if (access instanceof Response) return access
 
   const { searchParams } = new URL(request.url)
@@ -15,18 +15,25 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get('type') || ''
   const status = searchParams.get('status') || ''
 
-  const where: any = applyDataScope(access, {}, 'user_id')
+  const publishedOnly =
+    access.session.user.role === 'inspector' ||
+    access.session.user.role === 'engineer'
+  const filters: Prisma.analysis_reportWhereInput[] = [
+    publishedOnly ? { status: '已发布' } : {},
+  ]
   if (keyword) {
-    where.OR = [
-      { title: { contains: keyword, mode: 'insensitive' } },
-      { report_no: { contains: keyword, mode: 'insensitive' } },
-    ]
+    filters.push({
+      OR: [
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { report_no: { contains: keyword, mode: 'insensitive' } },
+      ],
+    })
   }
-  if (type) where.type = type
-  if (status) where.status = status
+  if (type) filters.push({ type })
+  if (status) filters.push({ status })
 
   const reports = await db.analysis_report.findMany({
-    where,
+    where: { AND: filters },
     include: {
       part_revision_links: {
         include: { part_revision: { include: { part: { select: { code: true, name: true } } } } },

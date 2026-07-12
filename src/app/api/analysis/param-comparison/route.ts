@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
-import { requireAuth } from '@/lib/permissions'
+import { requireDataScopeResource } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
   try {
-    const access = await requireAuth()
+    const access = await requireDataScopeResource('param_analysis')
     if (access instanceof Response) return access
     const { searchParams } = req.nextUrl
     const paramAId = searchParams.get('paramA_id')
@@ -46,13 +46,17 @@ export async function GET(req: NextRequest) {
       unit: p.unit ?? '',
     })
 
-    // ── 2. 查找同时包含这两个参数的 record_id ──
-    //    即同一检测记录中，这两条参数都有数据
-    //    SQL 思路: inspection_data_item for paramA  INNER JOIN  inspection_data_item for paramB  ON record_id
-    //    然后进一步按 category / equipment 过滤
+    // ── 2. 查找同一检测记录、同一零件版本中同时包含的两个参数 ──
+    // 参数约束分别由 paramA_id / paramB_id 提供；连接键为 record_id + part_revision_id + 当前参数对。
+    // 当前 Quality Scope 覆盖全部质量数据；all / quality 均可直接查询质量对象。
+    const scopeWhere: Prisma.inspection_data_itemWhereInput =
+      access.scope === 'all' || access.scope === 'quality'
+        ? {}
+        : { id: { equals: '__forbidden__' } }
 
     // 基础 where 条件
     const whereBase: Prisma.inspection_data_itemWhereInput = {
+      ...scopeWhere,
       record: {
         ...(equipmentId ? { equipment_id: equipmentId } : {}),
       },
@@ -61,7 +65,8 @@ export async function GET(req: NextRequest) {
             part: { category_id: categoryId },
           }
         : {}),
-      ...(partRevisionId ? { part_revision_id: partRevisionId } : {}),
+      // 历史未知版本保留在台账中，但不参与基于零件版本的参数对比。
+      part_revision_id: partRevisionId ?? { not: null },
     }
 
     // 取 paramA 的所有数据项（含关联）
@@ -69,6 +74,7 @@ export async function GET(req: NextRequest) {
       where: { ...whereBase, param_item_id: paramAId, value_number: { not: null } },
       select: {
         record_id: true,
+        part_revision_id: true,
         value_number: true,
         is_qualified: true,
         part: { select: { code: true, name: true } },
@@ -77,15 +83,22 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    // 按 record_id 建 map
+    const buildMatchKey = (recordId: string, revisionId: string) =>
+      [recordId, revisionId, paramAId, paramBId].join(':')
+
+    // 按 record_id + part_revision_id + 当前参数对建 map。
     const mapA = new Map<string, (typeof itemsA)[number]>()
-    for (const item of itemsA) mapA.set(item.record_id, item)
+    for (const item of itemsA) {
+      if (!item.part_revision_id) continue
+      mapA.set(buildMatchKey(item.record_id, item.part_revision_id), item)
+    }
 
     // 取 paramB 的所有数据项
     const itemsB = await db.inspection_data_item.findMany({
       where: { ...whereBase, param_item_id: paramBId, value_number: { not: null } },
       select: {
         record_id: true,
+        part_revision_id: true,
         value_number: true,
         is_qualified: true,
         part: { select: { code: true, name: true } },
@@ -94,7 +107,7 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    // 内连接：只保留两个参数都有数据的 record
+    // 内连接：只保留同一 record、同一零件版本中两个参数都有数据的记录。
     interface DataPoint {
       valueA: number
       valueB: number
@@ -110,7 +123,8 @@ export async function GET(req: NextRequest) {
     const valuesB: number[] = []
 
     for (const itemB of itemsB) {
-      const itemA = mapA.get(itemB.record_id)
+      if (!itemB.part_revision_id) continue
+      const itemA = mapA.get(buildMatchKey(itemB.record_id, itemB.part_revision_id))
       if (!itemA || itemA.value_number == null || itemB.value_number == null) continue
 
       const vA = itemA.value_number

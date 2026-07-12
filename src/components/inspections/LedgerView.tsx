@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
-import { Search, Download, Trash2, Filter, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Download, Filter, ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -26,18 +26,6 @@ import {
   TableBody,
   TableCell,
 } from '@/components/ui/table'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
-
 interface Category {
   id: string
   name: string
@@ -120,7 +108,6 @@ export default function LedgerView() {
   const [loading, setLoading] = useState(true)
   const [filters, setFilters] = useState<FilterState>(initialFilters)
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(initialFilters)
-  const [deleting, setDeleting] = useState<string | null>(null)
 
   // Fetch categories
   useEffect(() => {
@@ -156,11 +143,23 @@ export default function LedgerView() {
       if (!res.ok) throw new Error('获取记录失败')
       const json = await res.json()
       const normalized = (json.records ?? []).map((record: Record<string, unknown>) => {
-        const version = (record.part_versions as Array<{ code: string; name: string; revision_no: string | null }> | undefined)?.[0]
+        const version = (
+          record.part_versions as Array<{
+            code: string
+            name: string
+            revision_no: string | null
+            category: { id: string; name: string; code: string }
+          }> | undefined
+        )?.[0]
         return {
           id: record.id as string,
           recordNo: record.record_no as string,
-          part: { id: '', code: version?.code ?? '—', name: version?.name ?? '历史零件', category: { id: '', name: '—', code: '' } },
+          part: {
+            id: '',
+            code: version?.code ?? '—',
+            name: version?.name ?? '历史零件',
+            category: version?.category ?? { id: '', name: '—', code: '' },
+          },
           revision_no: version?.revision_no ?? null,
           batchNo: record.batch_no as string | null,
           inspector: record.inspector as string,
@@ -199,26 +198,13 @@ export default function LedgerView() {
   }
 
   const handleExport = () => {
-    window.open('/api/export?format=csv&type=inspections', '_blank')
-  }
-
-  const handleDelete = async (id: string) => {
-    setDeleting(id)
-    try {
-      const res = await fetch(`/api/inspections?id=${id}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || '删除失败')
-      }
-      toast.success('记录已删除')
-      fetchRecords(pagination.page)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败')
-    } finally {
-      setDeleting(null)
-    }
+    const params = new URLSearchParams({ type: 'inspections' })
+    if (appliedFilters.search) params.set('search', appliedFilters.search)
+    if (appliedFilters.categoryId) params.set('categoryId', appliedFilters.categoryId)
+    if (appliedFilters.result) params.set('result', appliedFilters.result)
+    if (appliedFilters.startDate) params.set('startDate', appliedFilters.startDate)
+    if (appliedFilters.endDate) params.set('endDate', appliedFilters.endDate)
+    window.open(`/api/export?${params.toString()}`, '_blank')
   }
 
   const updateFilter = (key: keyof FilterState, value: string) => {
@@ -369,13 +355,12 @@ export default function LedgerView() {
                     <TableHead className="hidden lg:table-cell">硬度</TableHead>
                     <TableHead className="hidden md:table-cell">表面质量</TableHead>
                     <TableHead>检测结果</TableHead>
-                    <TableHead className="w-[80px] text-center">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {records.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-24 text-center">
+                      <TableCell colSpan={9} className="h-24 text-center">
                         <p className="text-muted-foreground">暂无检测记录</p>
                       </TableCell>
                     </TableRow>
@@ -411,37 +396,6 @@ export default function LedgerView() {
                           <Badge variant={getResultBadgeVariant(record.result)}>
                             {record.result}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                disabled={deleting === record.id}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>确认删除</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  确定要删除检测记录 <span className="font-mono font-semibold">{record.recordNo}</span> 吗？此操作无法撤销。
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>取消</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-destructive text-white hover:bg-destructive/90"
-                                  onClick={() => handleDelete(record.id)}
-                                >
-                                  删除
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
                         </TableCell>
                       </TableRow>
                     ))
