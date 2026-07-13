@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,11 +39,18 @@ import {
   ClipboardList,
   Target,
   Infinity,
+  CheckCircle2,
+  Undo2,
 } from 'lucide-react'
 
 /* ================================================================
    Types
    ================================================================ */
+
+interface SourceContext {
+  inspection_record_ids: string[]
+  analysis_identifiers: string[]
+}
 
 interface Report {
   id: string
@@ -56,10 +64,11 @@ interface Report {
   status: string
   created_at: string
   updated_at: string
+  source_context: SourceContext | null
   part_revision_links: Array<{ part_revision: { id: string; revision_no: string; drawing_no: string | null; part: { code: string; name: string } } }>
 }
 
-type TabValue = '' | '草稿' | '已发布' | '已归档'
+type TabValue = '' | '草稿' | '审核中' | '已发布' | '已归档'
 
 /* ================================================================
    Constants
@@ -77,6 +86,7 @@ const TYPE_BADGE: Record<string, string> = {
 const TABS: { label: string; value: TabValue }[] = [
   { label: '全部', value: '' },
   { label: '草稿', value: '草稿' },
+  { label: '审核中', value: '审核中' },
   { label: '已发布', value: '已发布' },
   { label: '已归档', value: '已归档' },
 ]
@@ -89,13 +99,22 @@ const INITIAL_FORM = {
   conclusion: '',
   author: '',
   part_revision_ids: [] as string[],
+  inspection_record_ids_text: '',
+  analysis_identifiers_text: '',
 }
+
+const parseSourceValues = (value: string) =>
+  [...new Set(value.split(/[\n,，]/).map(item => item.trim()).filter(Boolean))]
 
 /* ================================================================
    Component
    ================================================================ */
 
 export default function ReportView() {
+  const { data: session } = useSession()
+  const userRole = (session?.user as { role?: string } | undefined)?.role
+  const canManageWorkflow = userRole === 'admin' || userRole === 'quality_manager'
+
   /* ── state ── */
   const [reports, setReports] = useState<Report[]>([])
   const [loading, setLoading] = useState(true)
@@ -113,6 +132,9 @@ export default function ReportView() {
   const [deleting, setDeleting] = useState(false)
 
   const [actionError, setActionError] = useState('')
+  const [workflowPending, setWorkflowPending] = useState<string | null>(null)
+  const [returnTarget, setReturnTarget] = useState<Report | null>(null)
+  const [returnReason, setReturnReason] = useState('')
 
   /* ── fetch reports ── */
   const fetchReports = async (status?: string) => {
@@ -123,9 +145,12 @@ export default function ReportView() {
       if (status) qs.set('status', status)
       const res = await fetch(`/api/reports?${qs}`)
       const data = await res.json()
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error || '加载报告列表失败')
+      }
       setReports(data.reports ?? [])
-    } catch {
-      setError('加载报告列表失败')
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '加载报告列表失败')
     } finally {
       setLoading(false)
     }
@@ -170,6 +195,8 @@ export default function ReportView() {
       conclusion: r.conclusion ?? '',
       author: r.author,
       part_revision_ids: r.part_revision_links.map(link => link.part_revision.id),
+      inspection_record_ids_text: r.source_context?.inspection_record_ids.join('\n') ?? '',
+      analysis_identifiers_text: r.source_context?.analysis_identifiers.join('\n') ?? '',
     })
     setFormOpen(true)
     setActionError('')
@@ -184,7 +211,27 @@ export default function ReportView() {
     setFormSaving(true)
     setActionError('')
     try {
-      const body: typeof form & { id?: string } = { ...form }
+      const {
+        inspection_record_ids_text,
+        analysis_identifiers_text,
+        ...reportFields
+      } = form
+      const inspectionRecordIds = parseSourceValues(inspection_record_ids_text)
+      const analysisIdentifiers = parseSourceValues(analysis_identifiers_text)
+      const body: typeof reportFields & {
+        id?: string
+        source_context?: SourceContext
+      } = {
+        ...reportFields,
+        ...(inspectionRecordIds.length || analysisIdentifiers.length
+          ? {
+              source_context: {
+                inspection_record_ids: inspectionRecordIds,
+                analysis_identifiers: analysisIdentifiers,
+              },
+            }
+          : {}),
+      }
       let res: Response
 
       if (editingId) {
@@ -216,21 +263,30 @@ export default function ReportView() {
     }
   }
 
-  const handleStatusChange = async (r: Report, newStatus: string) => {
+  const handleWorkflowAction = async (
+    report: Report,
+    action: 'submit-review' | 'return-for-revision' | 'publish',
+    reason?: string,
+  ) => {
     setActionError('')
+    setWorkflowPending(`${report.id}:${action}`)
     try {
-      const res = await fetch('/api/reports', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: r.id, status: newStatus }),
+      const res = await fetch(`/api/reports/${report.id}/${action}`, {
+        method: 'POST',
+        headers: reason === undefined ? undefined : { 'Content-Type': 'application/json' },
+        body: reason === undefined ? undefined : JSON.stringify({ reason }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        throw new Error((err as Record<string, string>).error || '状态变更失败')
+        throw new Error((err as Record<string, string>).error || '报告生命周期操作失败')
       }
+      setReturnTarget(null)
+      setReturnReason('')
       fetchReports(activeTab)
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : '操作失败')
+      setActionError(e instanceof Error ? e.message : '报告生命周期操作失败')
+    } finally {
+      setWorkflowPending(null)
     }
   }
 
@@ -261,10 +317,12 @@ export default function ReportView() {
         title="分析报告管理"
         description="编制月度、季度、专项、全生命周期分析报告，管理起草、发布和归档流程"
         actions={
-          <Button onClick={openCreate} size="sm">
-            <Plus className="mr-1.5 h-4 w-4" />
-            新建报告
-          </Button>
+          canManageWorkflow ? (
+            <Button onClick={openCreate} size="sm">
+              <Plus className="mr-1.5 h-4 w-4" />
+              新建报告
+            </Button>
+          ) : undefined
         }
       />
 
@@ -345,7 +403,7 @@ export default function ReportView() {
           title="暂无报告"
           description={activeTab ? `没有${activeTab}状态的报告` : '点击"新建报告"开始创建'}
           action={
-            !activeTab
+            !activeTab && canManageWorkflow
               ? { label: '新建报告', onClick: openCreate }
               : undefined
           }
@@ -395,6 +453,12 @@ export default function ReportView() {
                 {r.part_revision_links.length > 0 && (
                   <p className="text-xs text-muted-foreground">引用版本：{r.part_revision_links.map(link => `${link.part_revision.part.code} V${link.part_revision.revision_no}`).join('、')}</p>
                 )}
+                {(r.status === '审核中' || r.status === '已发布') && r.source_context && (
+                  <div className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
+                    <p>来源检测：{r.source_context.inspection_record_ids.join('、') || '—'}</p>
+                    <p className="mt-1">分析标识：{r.source_context.analysis_identifiers.join('、') || '—'}</p>
+                  </div>
+                )}
 
                 {/* 底部：编制人 + 日期 + 操作 */}
                 <div className="flex items-center justify-between border-t pt-3">
@@ -403,10 +467,11 @@ export default function ReportView() {
                     <div>{formatDate(r.created_at)}</div>
                   </div>
 
-                  {/* 操作按钮（hover 显示） */}
-                  <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    {/* 编辑（草稿/已发布可编辑） */}
-                    {(r.status === '草稿' || r.status === '已发布') && (
+                  {/* 仅用于交互提示；服务端仍负责所有生命周期授权。 */}
+                  {canManageWorkflow && (
+                    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    {/* 编辑（仅草稿） */}
+                    {r.status === '草稿' && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -418,29 +483,48 @@ export default function ReportView() {
                       </Button>
                     )}
 
-                    {/* 发布（仅草稿） */}
+                    {/* 提交审核（草稿 → 审核中） */}
                     {r.status === '草稿' && (
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-blue-600 hover:text-blue-700"
-                        onClick={() => handleStatusChange(r, '已发布')}
-                        title="发布"
+                        onClick={() => handleWorkflowAction(r, 'submit-review')}
+                        disabled={workflowPending === `${r.id}:submit-review`}
+                        title="提交审核"
                       >
                         <Send className="h-3.5 w-3.5" />
                       </Button>
                     )}
 
-                    {/* 归档（仅已发布） */}
-                    {r.status === '已发布' && (
+                    {/* 退回修改（审核中 → 草稿） */}
+                    {r.status === '审核中' && (
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-slate-500 hover:text-slate-700"
-                        onClick={() => handleStatusChange(r, '已归档')}
-                        title="归档"
+                        className="h-8 w-8 text-amber-600 hover:text-amber-700"
+                        onClick={() => {
+                          setReturnTarget(r)
+                          setReturnReason('')
+                        }}
+                        disabled={workflowPending !== null}
+                        title="退回修改"
                       >
-                        <Archive className="h-3.5 w-3.5" />
+                        <Undo2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+
+                    {/* 发布（审核中 → 已发布） */}
+                    {r.status === '审核中' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-emerald-600 hover:text-emerald-700"
+                        onClick={() => handleWorkflowAction(r, 'publish')}
+                        disabled={workflowPending === `${r.id}:publish`}
+                        title="发布"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
 
@@ -456,7 +540,8 @@ export default function ReportView() {
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -492,6 +577,27 @@ export default function ReportView() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>来源检测记录</Label>
+              <Textarea
+                value={form.inspection_record_ids_text}
+                onChange={event => setForm(current => ({ ...current, inspection_record_ids_text: event.target.value }))}
+                placeholder="输入检测记录 ID，多个值可用逗号或换行分隔"
+                rows={2}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>来源分析标识</Label>
+              <Textarea
+                value={form.analysis_identifiers_text}
+                onChange={event => setForm(current => ({ ...current, analysis_identifiers_text: event.target.value }))}
+                placeholder="输入分析参数或结果标识，多个值可用逗号或换行分隔"
+                rows={2}
+              />
+              <p className="text-xs text-muted-foreground">提交审核前必须同时填写来源检测记录和来源分析标识。</p>
             </div>
 
             {/* 类型 + 周期 */}
@@ -566,6 +672,52 @@ export default function ReportView() {
             </Button>
             <Button onClick={handleSave} disabled={formSaving}>
               {formSaving ? '保存中...' : editingId ? '保存' : '创建'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── 退回修改原因 ── */}
+      <Dialog
+        open={!!returnTarget}
+        onOpenChange={open => {
+          if (!open) {
+            setReturnTarget(null)
+            setReturnReason('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>退回报告修改</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <p className="text-sm text-muted-foreground">
+              请填写“{returnTarget?.title}”的退回原因。
+            </p>
+            <Textarea
+              value={returnReason}
+              onChange={event => setReturnReason(event.target.value)}
+              placeholder="请说明需要修改的内容"
+              rows={4}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReturnTarget(null)
+                setReturnReason('')
+              }}
+              disabled={workflowPending !== null}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => returnTarget && handleWorkflowAction(returnTarget, 'return-for-revision', returnReason)}
+              disabled={!returnReason.trim() || workflowPending !== null}
+            >
+              {workflowPending === `${returnTarget?.id}:return-for-revision` ? '退回中...' : '确认退回'}
             </Button>
           </DialogFooter>
         </DialogContent>

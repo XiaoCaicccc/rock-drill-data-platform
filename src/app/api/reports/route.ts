@@ -1,8 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
+import { z } from 'zod'
 import { db } from '@/lib/db'
-import { requireDataScopeResource, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { requireDataScopeResource, requireRole, type DataScopeType } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import { getStoredReportStatus, REPORT_WORKFLOW_WRITE_ROLES } from '@/lib/report-workflow'
+
+const sourceContextSchema = z.object({
+  inspection_record_ids: z.array(z.string().min(1)).min(1),
+  analysis_identifiers: z.array(z.string().min(1)).min(1),
+}).passthrough()
+
+async function requireDraftWriteAccess() {
+  const access = await requireDataScopeResource('reports')
+  if (access instanceof Response) return access
+  if (!REPORT_WORKFLOW_WRITE_ROLES.includes(access.session.user.role)) {
+    return NextResponse.json({ error: '无报告草稿写权限' }, { status: 403 })
+  }
+  return access
+}
+
+async function validateSourceContext(
+  value: unknown,
+  scope: DataScopeType,
+): Promise<{ data: Prisma.InputJsonValue } | { error: string }> {
+  if (scope !== 'all' && scope !== 'quality') {
+    return { error: '当前数据范围不允许写入报告来源上下文' }
+  }
+
+  const parsed = sourceContextSchema.safeParse(value)
+  if (!parsed.success) {
+    return { error: '来源上下文必须包含检测记录和分析标识' }
+  }
+
+  const inspectionRecordIds = [...new Set(parsed.data.inspection_record_ids)]
+  const inspectionRecords = await db.inspection_record.findMany({
+    where: { id: { in: inspectionRecordIds } },
+    select: { id: true },
+  })
+  if (inspectionRecords.length !== inspectionRecordIds.length) {
+    return { error: '来源上下文引用了不存在的检测记录' }
+  }
+
+  return { data: parsed.data as Prisma.InputJsonValue }
+}
 
 // ─── GET: 分析报告列表（按角色过滤） ───
 
@@ -48,9 +89,12 @@ export async function GET(request: NextRequest) {
 // ─── POST: 创建报告（自动关联当前用户） ───
 
 export async function POST(request: NextRequest) {
-  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  const access = await requireDraftWriteAccess()
   if (access instanceof Response) return access
   const body = await request.json()
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    return NextResponse.json({ error: '创建报告时不允许指定生命周期状态' }, { status: 400 })
+  }
   const { title, type, period, summary, conclusion, author, part_revision_ids = [] } = body
 
   if (!title || !type) {
@@ -62,9 +106,21 @@ export async function POST(request: NextRequest) {
   if (revisions.length !== new Set(part_revision_ids).size || revisions.some((revision) => revision.lifecycle_state !== 'released')) {
     return NextResponse.json({ error: '报告只能引用存在且已发布的零件版本' }, { status: 400 })
   }
+
+  let sourceContext: Prisma.InputJsonValue | undefined
+  if (Object.prototype.hasOwnProperty.call(body, 'source_context')) {
+    const validatedSourceContext = await validateSourceContext(body.source_context, access.scope)
+    if ('error' in validatedSourceContext) {
+      return NextResponse.json({ error: validatedSourceContext.error }, { status: 422 })
+    }
+    sourceContext = validatedSourceContext.data
+  }
+
   const report = await db.analysis_report.create({
     data: {
       report_no: `BG-${Date.now()}`, title, type, period: period || null, summary: summary || null, conclusion: conclusion || null, author: author || '', user_id: access.user.id,
+      status: getStoredReportStatus('draft'),
+      ...(sourceContext === undefined ? {} : { source_context: sourceContext }),
       part_revision_links: { create: part_revision_ids.map((part_revision_id: string) => ({ part_revision_id })) },
     },
     include: { part_revision_links: { include: { part_revision: { include: { part: { select: { code: true, name: true } } } } } } },
@@ -76,39 +132,39 @@ export async function POST(request: NextRequest) {
 
 // ─── PUT: 更新报告内容 / 状态流转 ───
 
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  '草稿': ['已发布'],
-  '已发布': ['已归档'],
-  '已归档': [],
-}
-
 export async function PUT(request: NextRequest) {
-  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  const access = await requireDraftWriteAccess()
   if (access instanceof Response) return access
 
   const body = await request.json()
-  const { id, title, type, period, summary, conclusion, author, status, part_revision_ids } = body
+  const { id, title, type, period, summary, conclusion, author, part_revision_ids } = body
 
   if (!id) {
     return NextResponse.json({ error: '缺少报告 ID' }, { status: 400 })
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'status')) {
+    return NextResponse.json({ error: '报告状态只能通过生命周期接口变更' }, { status: 400 })
   }
 
   const existing = await db.analysis_report.findUnique({ where: { id } })
   if (!existing) {
     return NextResponse.json({ error: '报告不存在' }, { status: 404 })
   }
-  const ownership = await requireOwnershipOrAdmin(existing.user_id)
-  if (ownership instanceof Response) return ownership
+  if (existing.status !== getStoredReportStatus('draft')) {
+    return NextResponse.json(
+      { error: `仅草稿状态允许编辑，当前状态为"${existing.status}"` },
+      { status: 409 },
+    )
+  }
 
-  // 状态流转校验
-  if (status && status !== existing.status) {
-    const allowed = VALID_TRANSITIONS[existing.status] ?? []
-    if (!allowed.includes(status)) {
-      return NextResponse.json(
-        { error: `不允许从"${existing.status}"转为"${status}"，合法目标：${allowed.join('、') || '无'}` },
-        { status: 400 },
-      )
+  let sourceContext: Prisma.InputJsonValue | undefined
+  if (Object.prototype.hasOwnProperty.call(body, 'source_context')) {
+    const validatedSourceContext = await validateSourceContext(body.source_context, access.scope)
+    if ('error' in validatedSourceContext) {
+      return NextResponse.json({ error: validatedSourceContext.error }, { status: 422 })
     }
+    sourceContext = validatedSourceContext.data
   }
 
   const data: Record<string, unknown> = {}
@@ -118,7 +174,7 @@ export async function PUT(request: NextRequest) {
   if (summary !== undefined) data.summary = summary || null
   if (conclusion !== undefined) data.conclusion = conclusion || null
   if (author !== undefined) data.author = author
-  if (status !== undefined) data.status = status
+  if (sourceContext !== undefined) data.source_context = sourceContext
 
   if (part_revision_ids !== undefined) {
     if (!Array.isArray(part_revision_ids)) return NextResponse.json({ error: '零件版本引用格式错误' }, { status: 400 })
@@ -140,7 +196,7 @@ export async function PUT(request: NextRequest) {
 // ─── DELETE: 删除报告（仅草稿可删） ───
 
 export async function DELETE(request: NextRequest) {
-  const access = await requireRole(['admin', 'quality_manager', 'engineer'])
+  const access = await requireRole(['admin', 'quality_manager'])
   if (access instanceof Response) return access
 
   const id = request.nextUrl.searchParams.get('id')
@@ -152,15 +208,12 @@ export async function DELETE(request: NextRequest) {
   if (!existing) {
     return NextResponse.json({ error: '报告不存在' }, { status: 404 })
   }
-  const ownership = await requireOwnershipOrAdmin(existing.user_id)
-  if (ownership instanceof Response) return ownership
-  if (existing.status !== '草稿') {
+  if (existing.status !== getStoredReportStatus('draft')) {
     return NextResponse.json(
       { error: `仅草稿状态可删除，当前状态为"${existing.status}"` },
       { status: 409 },
     )
   }
-
   await db.analysis_report.delete({ where: { id } })
   await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
   return NextResponse.json({ success: true })

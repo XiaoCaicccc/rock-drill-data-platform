@@ -520,6 +520,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<SeedCounts> {
   const deleteOps: Promise<any>[] = [
     prisma.inspection_data_item.deleteMany(),   // ①
     prisma.analysis_report_part_revision.deleteMany(),
+    prisma.analysis_report_snapshot.deleteMany(),
     prisma.equipment_part_installation.deleteMany(),
     prisma.meeting_resolution.deleteMany(),      // ②
     prisma.meeting.deleteMany(),                 // ③

@@ -49,6 +49,7 @@ model user {
 
   inspection_records inspection_record[]
   analysis_reports   analysis_report[]
+  published_report_snapshots analysis_report_snapshot[] @relation("analysis_report_snapshot_published_by")
   tasks              task[]
   audit_logs         AuditLog[]
 
@@ -269,14 +270,37 @@ model analysis_report {
   conclusion  String?
   author      String
   status      String   @default("草稿")
+  review_reason String?
+  source_context Json?
   user_id     String?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
 
   user user? @relation(fields: [user_id], references: [id])
   part_revision_links analysis_report_part_revision[]
+  publication_snapshot analysis_report_snapshot?
 
   @@map("analysis_report")
+  @@index([status, created_at])
+  @@index([user_id])
+}
+
+// 发布快照：仅在报告发布事务中创建，保留发布时的最小追溯信息。
+model analysis_report_snapshot {
+  id               String   @id @default(uuid()) @db.Uuid
+  report_id        String   @unique
+  content_snapshot Json
+  source_snapshot  Json
+  published_by     String
+  published_at     DateTime @default(now())
+  created_at       DateTime @default(now())
+
+  report    analysis_report @relation(fields: [report_id], references: [id], onDelete: Restrict)
+  publisher user            @relation("analysis_report_snapshot_published_by", fields: [published_by], references: [id], onDelete: Restrict)
+
+  @@index([published_by])
+  @@index([published_at])
+  @@map("analysis_report_snapshot")
 }
 
 // ============================================================

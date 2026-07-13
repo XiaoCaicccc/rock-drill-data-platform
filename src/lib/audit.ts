@@ -1,5 +1,7 @@
-import type { Prisma } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { db } from '@/lib/db'
+
+type AuditClient = Pick<PrismaClient, 'auditLog'>
 
 export type AuditParams = {
   userId: string
@@ -13,13 +15,13 @@ export type AuditParams = {
 }
 
 /** 只记录摘要，禁止把密码、token、完整文件内容写入审计日志。 */
-export async function logAudit(params: AuditParams) {
+export async function logAudit(params: AuditParams, client: AuditClient = db) {
   const ip = params.request?.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     ?? params.request?.headers.get('x-real-ip')
     ?? null
   const userAgent = params.request?.headers.get('user-agent') ?? null
 
-  return db.auditLog.create({
+  return client.auditLog.create({
     data: {
       userId: params.userId,
       action: params.action,
