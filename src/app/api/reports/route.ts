@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
 
   const report = await db.analysis_report.create({
     data: {
-      report_no: `BG-${Date.now()}`, title, type, period: period || null, summary: summary || null, conclusion: conclusion || null, author: author || '', user_id: access.user.id,
+      report_no: `BG-${Date.now()}`, title, type, period: period || null, summary: summary || null, conclusion: conclusion || null, author: author || '', user_id: access.session.user.id,
       status: getStoredReportStatus('draft'),
       ...(sourceContext === undefined ? {} : { source_context: sourceContext }),
       part_revision_links: { create: part_revision_ids.map((part_revision_id: string) => ({ part_revision_id })) },
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     include: { part_revision_links: { include: { part_revision: { include: { part: { select: { code: true, name: true } } } } } } },
   })
 
-  await logAudit({ userId: access.user.id, action: 'CREATE', entityType: 'analysis_report', entityId: report.id, after: { report_no: report.report_no, title: report.title }, request })
+  await logAudit({ userId: access.session.user.id, action: 'CREATE', entityType: 'analysis_report', entityId: report.id, after: { report_no: report.report_no, title: report.title }, request })
   return NextResponse.json({ report }, { status: 201 })
 }
 
@@ -189,7 +189,7 @@ export async function PUT(request: NextRequest) {
     include: { part_revision_links: { include: { part_revision: { include: { part: { select: { code: true, name: true } } } } } } },
   })
 
-  await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'analysis_report', entityId: id, before: { status: existing.status, title: existing.title }, after: { status: updated.status, title: updated.title }, request })
+  await logAudit({ userId: access.session.user.id, action: 'UPDATE', entityType: 'analysis_report', entityId: id, before: { status: existing.status, title: existing.title }, after: { status: updated.status, title: updated.title }, request })
   return NextResponse.json({ report: updated })
 }
 
@@ -215,6 +215,6 @@ export async function DELETE(request: NextRequest) {
     )
   }
   await db.analysis_report.delete({ where: { id } })
-  await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
+  await logAudit({ userId: access.session.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
   return NextResponse.json({ success: true })
 }
