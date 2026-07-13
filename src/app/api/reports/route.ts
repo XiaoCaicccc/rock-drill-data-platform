@@ -215,6 +215,6 @@ export async function DELETE(request: NextRequest) {
     )
   }
   await db.analysis_report.delete({ where: { id } })
-  await logAudit({ userId: access.session.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
+  await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'analysis_report', entityId: id, before: { title: existing.title }, request })
   return NextResponse.json({ success: true })
 }
