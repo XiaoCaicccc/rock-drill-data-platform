@@ -100,3 +100,17 @@ Static Verification 与 Runtime Verification 必须分开记录。
 | 编辑草稿 | PASS。 |
 
 本次仅修复报告弹窗滚动与响应式可用性；权限、API、Schema、Migration、Data Scope 和报告生命周期均未改变。
+
+## SPEC-001-C C-1A-1 Runtime Verification
+
+状态：PASS
+环境：Railway production。
+
+| 验收场景 | 结果 |
+| --- | --- |
+| `admin` 登录 | PASS：Dashboard 与 Dashboard Export 的待办事项统计一致。 |
+| `quality_manager` 登录 | PASS：质量统计、月度趋势与 Dashboard Export 一致；待办事项保持既有质量范围规则。 |
+| 月度趋势 | PASS：数据、月份标签和排序一致。 |
+| 类别统计 | PASS：类别统计排序一致。 |
+
+本项未修改 Schema、Migration、权限模型或 Data Scope；`GET /api/dashboard` 的 response shape 保持不变。

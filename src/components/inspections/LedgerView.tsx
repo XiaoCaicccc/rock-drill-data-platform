@@ -234,7 +234,7 @@ export default function LedgerView() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="ledger-search"
-                  placeholder="编号、名称、检测员、批次"
+                  placeholder="检测编号、零件名称/编码、检测员、批次"
                   className="pl-9"
                   value={filters.search}
                   onChange={(e) => updateFilter('search', e.target.value)}

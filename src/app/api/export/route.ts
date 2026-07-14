@@ -83,6 +83,18 @@ async function exportInspections(params: URLSearchParams, scope: DataScopeType) 
               { record_no: { contains: search, mode: 'insensitive' } },
               { inspector: { contains: search, mode: 'insensitive' } },
               { batch_no: { contains: search, mode: 'insensitive' } },
+              {
+                data_items: {
+                  some: {
+                    part: {
+                      OR: [
+                        { name: { contains: search, mode: 'insensitive' } },
+                        { code: { contains: search, mode: 'insensitive' } },
+                      ],
+                    },
+                  },
+                },
+              },
             ],
           }
         : {}),

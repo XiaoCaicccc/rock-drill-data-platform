@@ -68,11 +68,44 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 ### C-1A 查询与导出一致性收敛
 
-保留既有范围、风险和验收标准：
+**状态**：Audit Complete → Implementation。
 
-- Dashboard 与 Dashboard 导出统计口径一致；
-- 检测台账与检测导出筛选契约一致；
-- 不改变 Data Scope 和六类身份权限；
+本任务依据 C-1A Query Audit 拆分为以下最小实施项：
+
+#### C-1A-1 Dashboard Export Alignment
+
+**状态**：Implementation Complete → Runtime Verification PASS。
+
+范围：
+
+- Dashboard 与 Dashboard Export 的待办事项统计一致；
+- 时间窗口定义一致；
+- 趋势和类别结果排序稳定。
+
+**运行时验证证据**：
+
+- `admin` 登录验证通过；
+- `quality_manager` 登录验证通过；
+- Dashboard 与 Dashboard Export 待办事项统计一致；
+- 月度趋势数据与趋势月份标签一致，趋势排序稳定；
+- 类别统计排序一致。
+
+本项未修改 Schema、Migration、权限模型或 Data Scope，且 API response shape 保持不变。
+
+#### C-1A-2 Inspection Search Contract Alignment
+
+范围：
+
+- 台账搜索提示与实际能力一致；
+- 零件名称、零件编码搜索能力统一；
+- 导出与台账筛选契约一致。
+
+共同约束：
+
+- 不新增公共查询层；
+- 不修改 Schema；
+- 不修改权限模型；
+- 不修改 Data Scope；
 - 需要代码与针对性回归测试。
 
 ### C-1B 分析报告弹窗滚动与响应式可用性修复
