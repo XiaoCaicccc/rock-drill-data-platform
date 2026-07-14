@@ -9,6 +9,8 @@
 ## 当前记录
 
 - [SPEC-001-A Closure](./SPEC-001-A-CLOSURE.md)
+- [SPEC-001-B Report Workflow](./SPEC-001-B-report-workflow.md)
+- [SPEC-001-B Closure](./SPEC-001-B-CLOSURE.md)
 - [SPEC 模板](./SPEC_TEMPLATE.md)
 
 ## 编写原则

@@ -3,6 +3,7 @@
 本目录记录项目事实、架构决策、SPEC、测试证据、开放问题和开发流程。
 
 - [当前状态](./CURRENT_STATE.md)
+- [产品路线](./04_ROADMAP.md)
 - [架构与权限决策](./05_DECISIONS.md)
 - [开放问题](./06_ISSUES.md)
 - [测试与验收](./07_TESTING.md)

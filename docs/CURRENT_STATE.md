@@ -1,6 +1,6 @@
 # 当前项目状态
 
-更新时间：2026-07-13
+更新时间：2026-07-14
 
 ## 产品定位
 
@@ -22,6 +22,19 @@ Achievement：
 
 详情见 [SPEC-001-A Closure](./specs/SPEC-001-A-CLOSURE.md)。
 
+### M2 Report Lifecycle Workflow
+
+状态：Completed
+
+Achievement：
+
+- 报告生命周期已形成 `draft → reviewing → published`，并支持 `reviewing → draft` 退回修改；
+- 仅 `admin` 与 `quality_manager` 拥有生命周期写权限；`inspector` 与 `engineer` 仅读取已发布报告；
+- 发布在同一事务内完成状态更新、发布快照与 `PUBLISH` 审计写入；
+- Railway production 已完成六类身份运行时验收并通过。
+
+详情见 [SPEC-001-B Closure](./specs/SPEC-001-B-CLOSURE.md)。
+
 ## 当前冻结规则
 
 - requireDataScopeResource() 必须在数据库查询前执行。
@@ -31,8 +44,8 @@ Achievement：
 
 ## Next
 
-1. Report Workflow：补齐报告 reviewing -> published 的审批与发布闭环。
-2. Audit / Traceability：扩大关键对象、状态转换和文件访问的审计与追溯范围。
+1. 来源选择器：按 `record_no`、零件、日期等业务信息选择检测记录，避免第一版手工输入内部 ID。
+2. Analysis Result 实体化：建立权威分析结果对象，替代仅校验非空的 `analysis_identifiers`。
 3. Shared Query Contract：收敛 Dashboard、台账、导出之间的筛选与统计口径。
 
 ## 文档一致性检查结果

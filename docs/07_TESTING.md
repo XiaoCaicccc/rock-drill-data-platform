@@ -61,3 +61,27 @@ Static Verification 是对真实仓库当前实现和 3434faa diff 的源码审�
 - Evidence：截图、日志、测试输出或部署记录。
 
 Static Verification 与 Runtime Verification 必须分开记录。
+
+## SPEC-001-B Runtime Verification
+
+状态：PASS
+验收日期：2026-07-14
+环境：Railway production；Build、Deploy 与 Prisma Migration 均成功。
+
+### 六类身份验收矩阵
+
+| 身份 | `GET /api/reports` | 生命周期写接口 | 实际结果 |
+| --- | --- | --- | --- |
+| `admin` | 200，全部报告 | 创建、编辑、提交审核、退回、发布均允许 | PASS |
+| `quality_manager` | 200，全部质量报告 | 创建、编辑、提交审核、退回、发布均允许 | PASS |
+| `inspector` | 200，仅 `published` | 403 | PASS |
+| `engineer` | 200，仅 `published` | 403 | PASS |
+| `viewer` | 403 | 403 | PASS |
+| `anonymous` | 401 | 401 | PASS |
+
+### 已验证流程与证据
+
+- 已验证：创建草稿、编辑来源上下文、提交审核、退回修改、再次提交、发布和查看发布报告。
+- `audit_log` 已验证：`LOGIN`、`CREATE`、`UPDATE`、`SUBMIT_REVIEW`、`RETURN_FOR_REVISION`、`PUBLISH`。
+- `analysis_report_snapshot` 已存在；发布状态、快照和 `PUBLISH` 审计在同一事务完成。
+- 边界测试均通过：已发布报告禁止修改、禁止重新提交、删除仅限草稿、发布快照保持不变。

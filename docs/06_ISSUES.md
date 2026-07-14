@@ -9,11 +9,11 @@
 ## ISSUE-001: Report Workflow Missing Publish Action
 
 - 类型：Future Feature
-- 状态：Deferred
-- 后续归属：Report Workflow SPEC
-- 描述：报告数据中存在草稿、审核中、已发布状态样例，但当前报告 API 的状态转换只覆盖草稿 -> 已发布 -> 已归档。审核中没有审核中 -> 已发布发布入口，界面也没有面向该状态的发布动作。
-- 影响：审核中的报告无法按预期完成发布闭环；状态展示与状态机实现不一致。
-- 后续要求：先定义提交审核、审核通过、拒绝退回、发布、撤回和审计规则，再开发页面与 API。
+- 状态：Resolved
+- 后续归属：SPEC-001-B Closure
+- 描述：SPEC-001-B 已实现 `draft → reviewing → published` 与 `reviewing → draft`，并完成发布快照、审计和运行时权限验收。
+- 影响：原“审核中无法发布”的阻塞已消除。
+- 后续要求：归档、报告版本及通知等能力仍须通过独立 SPEC 定义。
 
 ## ISSUE-002: Dashboard Metric Logic Duplication
 
