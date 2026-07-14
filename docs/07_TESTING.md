@@ -129,3 +129,21 @@ Static Verification 与 Runtime Verification 必须分开记录。
 | `quality_manager` | 权限与 Data Scope 保持既有规则 | PASS。 |
 
 本项未修改 Prisma Schema、Migration、权限模型、Data Scope、分页或 API 返回结构；检测台账与检测导出继续使用同一搜索契约。
+
+## SPEC-001-C C-2A CI Verification
+
+状态：PASS
+环境：GitHub Actions 临时 PostgreSQL service，workflow `ci: add deterministic build and migration gates`（2026-07-14）。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 临时 PostgreSQL service 健康启动 | PASS |
+| `npm ci` | PASS |
+| Prisma Schema Validate | PASS |
+| Prisma Client Generate | PASS |
+| 空 PostgreSQL 执行完整 `prisma migrate deploy` | PASS |
+| TypeScript Check | PASS |
+| Lint | PASS |
+| Next.js Build | PASS |
+
+该工作流的 `DATABASE_URL` 仅指向 GitHub Actions 临时 PostgreSQL；未连接 Railway 或生产数据库，未使用 `prisma db push`。本记录仅证明 CI 门禁；Railway 最新 Docker Build、Deploy 与基础访问需在实际生产部署后单独记录。

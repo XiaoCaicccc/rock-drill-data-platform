@@ -163,7 +163,7 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 ### C-2A Deterministic Build and Migration Gate
 
-**状态**：Implementation / Pending CI Verification。
+**状态**：CI Verification PASS。
 
 - Docker 依赖层使用 `package.json` 与 `package-lock.json` 执行 `npm ci`，使容器安装结果与锁文件一致；
 - CI 保留依赖安装、Prisma Client 生成、类型检查、lint 与构建，并增加 Prisma Schema Validate；
@@ -171,7 +171,11 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 - 不连接 Railway 或生产数据库，不使用 `prisma db push`，也不在应用启动时自动迁移；
 - 不修改 Schema、Migration、业务代码、Data Scope 或已冻结权限规则。
 
-本项的 CI 验证通过后，才可标记为 Runtime Verification PASS。
+**CI 验证证据**：GitHub Actions workflow `ci: add deterministic build and migration gates` 于 2026-07-14 成功完成。临时 PostgreSQL service 健康启动，`npm ci`、Prisma Schema Validate、Prisma Client Generate、空 PostgreSQL 上的完整 `prisma migrate deploy`、TypeScript Check、lint 和 Next.js Build 均通过。
+
+该 CI 仅使用临时 PostgreSQL `DATABASE_URL`，未连接 Railway 或生产数据库；未使用 `prisma db push`，未升级依赖。Docker 已使用 `package-lock.json` 与 `npm ci`，生产启动方式及受控执行 `prisma migrate deploy` 的方式保持不变。
+
+Railway 最新 Docker Build、Deploy 与应用基础访问尚未在本项记录中确认；如需作为生产运行时证据，应在实际部署验证后另行补充。
 
 ### Deferred C-2B / C-2C
 
