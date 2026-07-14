@@ -157,6 +157,29 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 7. 取消、保存、提交审核等操作始终可访问；
 8. 不影响 `source_context` 校验、六类身份权限和报告生命周期。
 
+## C-2 工程质量与验证基线
+
+**状态**：Audit Complete → Implementation。
+
+### C-2A Deterministic Build and Migration Gate
+
+**状态**：Implementation / Pending CI Verification。
+
+- Docker 依赖层使用 `package.json` 与 `package-lock.json` 执行 `npm ci`，使容器安装结果与锁文件一致；
+- CI 保留依赖安装、Prisma Client 生成、类型检查、lint 与构建，并增加 Prisma Schema Validate；
+- CI 使用仅限临时 service container 的 PostgreSQL 执行 `prisma migrate deploy`，验证全部历史 migration 可从空数据库完整应用；
+- 不连接 Railway 或生产数据库，不使用 `prisma db push`，也不在应用启动时自动迁移；
+- 不修改 Schema、Migration、业务代码、Data Scope 或已冻结权限规则。
+
+本项的 CI 验证通过后，才可标记为 Runtime Verification PASS。
+
+### Deferred C-2B / C-2C
+
+- **C-2B**：Windows 本地 Node/PATH、`cp` / `tee` 跨平台兼容，以及本地 Node 20 安装与验证指引；
+- **C-2C**：自动化测试门禁、`scripts/test-param-analysis.ts` 的旧 SQLite 依赖、`prisma/dev.db`、`bun.lock` 与少量高价值回归测试。
+
+本轮不处理以上事项。
+
 ## 4. 领域规则与状态机
 
 - 本 SPEC 不新增或改变业务状态机。

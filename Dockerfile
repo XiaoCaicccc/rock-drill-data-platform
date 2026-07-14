@@ -5,8 +5,8 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Build stage
 FROM base AS builder
@@ -42,7 +42,8 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy static assets
 COPY --from=builder /app/.next/standalone/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone/public ./public
-# Copy prisma schema for db push in Console
+# Copy Prisma schema and migrations for Railway Console `prisma migrate deploy`.
+# Production database changes must use Prisma migrations, never `prisma db push`.
 COPY --from=builder /app/prisma ./prisma
 
 USER nextjs
