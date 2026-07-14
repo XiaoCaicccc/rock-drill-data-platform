@@ -177,12 +177,20 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 Railway 最新 Docker Build、Deploy 与应用基础访问尚未在本项记录中确认；如需作为生产运行时证据，应在实际部署验证后另行补充。
 
-### Deferred C-2B / C-2C
+### C-2B Windows Local Verification Baseline
 
-- **C-2B**：Windows 本地 Node/PATH、`cp` / `tee` 跨平台兼容，以及本地 Node 20 安装与验证指引；
-- **C-2C**：自动化测试门禁、`scripts/test-param-analysis.ts` 的旧 SQLite 依赖、`prisma/dev.db`、`bun.lock` 与少量高价值回归测试。
+**状态**：Implementation / Pending Local Verification。
 
-本轮不处理以上事项。
+- 统一 Windows、CI 与 Docker 的 Node 20 本地开发基线，并记录 Node/PATH 与 PowerShell `npm.ps1` 的诊断边界；
+- 使用零依赖 Node 脚本替代 `build` 中的 `cp -r` 与 `dev` 中的 `tee`，保持 standalone 资产复制和开发日志可用；
+- 不自动安装系统软件、不修改用户 PATH；Node 可用后再执行 Windows Runtime Verification；
+- 不修改业务功能、权限、Data Scope、API、Schema 或 Migration。
+
+### Deferred C-2C
+
+- 自动化测试门禁、`scripts/test-param-analysis.ts` 的旧 SQLite 依赖、`prisma/dev.db`、`bun.lock` 与少量高价值回归测试。
+
+本轮不处理 C-2C。
 
 ## 4. 领域规则与状态机
 

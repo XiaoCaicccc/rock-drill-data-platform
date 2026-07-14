@@ -42,3 +42,13 @@ SPEC -> Implementation -> AI Coding Agent -> Code Review -> Static Verification 
 - 更新 SPEC 状态、决策、测试记录、当前状态和开放问题。
 - 区分已完成事实、已知限制、Deferred Future Feature 和环境问题。
 - Closure 只能关闭当前范围，不自动关闭后续流程或技术债。
+
+## Windows 本地验证基线
+
+- 本项目使用 Node.js 20（`>=20.19.0 <21`），与 CI 和 Docker 保持一致。
+- 在安装依赖前依次执行：`node -v`、`npm -v`、`where.exe node`、`where.exe npm`。
+- `where.exe node` 无结果属于 Node 未安装或 PATH 未生效；`npm.cmd` 不能替代 `node.exe`。
+- PowerShell 若拦截 `npm.ps1`，可改用 `npm.cmd`，但仅在 Node 已可用时有效。
+- Windows 本地验证顺序：`npm ci` → `npm run db:validate` → `npm run db:generate` → `npm run typecheck` → `npm run lint` → `npm run build`。
+- 本地 PostgreSQL 与 MinIO 使用 `docker compose up -d` 启动；`db:push` 仅限本地开发，生产只能使用 `db:migrate`。
+- 本地环境不可用时，CI 可作为静态门禁替代证据，不得冒充本地验证已通过。
