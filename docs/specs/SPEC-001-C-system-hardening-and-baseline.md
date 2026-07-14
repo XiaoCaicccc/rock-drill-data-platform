@@ -11,6 +11,8 @@ SPEC-001-A 已完成质量数据授权与 Data Scope 验收，SPEC-001-B 已完�
 
 ## C-0 Baseline Audit
 
+**状态**：Complete。
+
 ### 启动前基线
 
 SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭 SPEC 的业务规则：
@@ -66,9 +68,11 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 ## C-1 既有功能一致性与阻断性可用问题收敛
 
+**状态**：Completed / PASS。
+
 ### C-1A 查询与导出一致性收敛
 
-**状态**：Audit Complete → Implementation。
+**状态**：Completed / PASS。
 
 本任务依据 C-1A Query Audit 拆分为以下最小实施项：
 
@@ -94,11 +98,21 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 #### C-1A-2 Inspection Search Contract Alignment
 
+**状态**：Runtime Verification PASS。
+
 范围：
 
 - 台账搜索提示与实际能力一致；
 - 零件名称、零件编码搜索能力统一；
 - 导出与台账筛选契约一致。
+
+**运行时验证证据**：
+
+- `admin`：零件编码、零件名称、检测编号、检测员与批次搜索均通过；零件名称/编码筛选后的页面与导出结果一致，组合筛选、空结果处理与原有搜索能力均通过；
+- `quality_manager`：零件名称、零件编码搜索以及检测台账与导出均通过，权限和数据范围保持不变；
+- 检测台账与检测导出继续使用同一搜索契约。
+
+本项未修改 Prisma Schema、Migration、权限模型、Data Scope、分页或 API 返回结构。
 
 共同约束：
 

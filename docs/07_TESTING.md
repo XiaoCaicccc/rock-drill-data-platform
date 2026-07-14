@@ -114,3 +114,18 @@ Static Verification 与 Runtime Verification 必须分开记录。
 | 类别统计 | PASS：类别统计排序一致。 |
 
 本项未修改 Schema、Migration、权限模型或 Data Scope；`GET /api/dashboard` 的 response shape 保持不变。
+
+## SPEC-001-C C-1A-2 Runtime Verification
+
+状态：PASS
+环境：Railway production。
+
+| 角色 | 验收场景 | 结果 |
+| --- | --- | --- |
+| `admin` | 零件编码、零件名称、检测编号、检测员、批次搜索 | PASS。 |
+| `admin` | 零件名称/编码筛选后的台账与导出结果一致 | PASS。 |
+| `admin` | 组合筛选、空结果处理、原有搜索能力 | PASS。 |
+| `quality_manager` | 零件名称、零件编码搜索；检测台账与导出 | PASS。 |
+| `quality_manager` | 权限与 Data Scope 保持既有规则 | PASS。 |
+
+本项未修改 Prisma Schema、Migration、权限模型、Data Scope、分页或 API 返回结构；检测台账与检测导出继续使用同一搜索契约。
