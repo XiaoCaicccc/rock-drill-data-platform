@@ -85,3 +85,18 @@ Static Verification 与 Runtime Verification 必须分开记录。
 - `audit_log` 已验证：`LOGIN`、`CREATE`、`UPDATE`、`SUBMIT_REVIEW`、`RETURN_FOR_REVISION`、`PUBLISH`。
 - `analysis_report_snapshot` 已存在；发布状态、快照和 `PUBLISH` 审计在同一事务完成。
 - 边界测试均通过：已发布报告禁止修改、禁止重新提交、删除仅限草稿、发布快照保持不变。
+
+## SPEC-001-C C-1B Runtime Verification
+
+状态：PASS
+环境：Railway production；修复版本已部署。
+
+| 验收场景 | 结果 |
+| --- | --- |
+| 桌面浏览器 100% 缩放 | PASS：完整表单与底部操作按钮可访问。 |
+| 低高度桌面视口 | PASS：表单内容在弹窗内部纵向滚动。 |
+| 移动端视口 | PASS：无横向溢出，可完成滚动与操作。 |
+| 新建报告 | PASS。 |
+| 编辑草稿 | PASS。 |
+
+本次仅修复报告弹窗滚动与响应式可用性；权限、API、Schema、Migration、Data Scope 和报告生命周期均未改变。

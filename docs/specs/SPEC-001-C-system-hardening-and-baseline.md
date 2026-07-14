@@ -81,7 +81,15 @@ SPEC-001-C 在以下已验证基线上启动，不重新验收或改变已关闭
 
 **问题等级**：P1 Existing Usability Defect。该问题阻断既有报告核心流程，属于 SPEC-001-C 必须解决的现有功能缺陷，而非未来功能优化。
 
-**实施状态**：Implementation / Pending Runtime Verification。
+**实施状态**：Implementation → Runtime Verification PASS。
+
+**验证证据**：
+
+- Desktop browser 100% zoom：PASS；
+- Low height viewport：PASS；
+- Mobile viewport：PASS；
+- New report：PASS；
+- Edit draft：PASS。
 
 **预计实现位置**：优先检查 `src/components/reports/ReportView.tsx`。仅确认多个 Dialog 都存在同类问题时，才考虑 `src/components/ui/dialog.tsx`；禁止为本问题进行全局 Dialog 重构。
 
