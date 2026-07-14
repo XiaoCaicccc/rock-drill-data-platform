@@ -148,12 +148,14 @@ async function exportInspections(params: URLSearchParams, scope: DataScopeType) 
 async function exportDashboard(scope: DataScopeType) {
   const now = new Date()
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const trendStart = new Date(now.getFullYear(), now.getMonth() - 6, 1)
   const recordScope = qualityScopeWhere(scope)
   const [
     totalInspections,
     thisMonthInspections,
     qualifiedItems,
     thisMonthQualifiedItems,
+    monthlyTrendRaw,
     records,
     equipment,
   ] = await Promise.all([
@@ -172,9 +174,21 @@ async function exportDashboard(scope: DataScopeType) {
       },
       _count: { is_qualified: true },
     }),
+    db.$queryRaw<
+      { month: string; count: bigint; qualified: bigint }[]
+    >(Prisma.sql`
+      SELECT
+        TO_CHAR(r.inspection_date, 'YYYY-MM') AS month,
+        COUNT(*) AS count,
+        SUM(CASE WHEN di.is_qualified = true THEN 1 ELSE 0 END) AS qualified
+      FROM inspection_record r
+      JOIN inspection_data_item di ON di.record_id = r.id
+      WHERE r.inspection_date >= ${trendStart}
+      GROUP BY TO_CHAR(r.inspection_date, 'YYYY-MM')
+      ORDER BY month ASC
+    `),
     db.inspection_record.findMany({
       select: {
-        inspection_date: true,
         data_items: {
           select: {
             is_qualified: true,
@@ -184,8 +198,9 @@ async function exportDashboard(scope: DataScopeType) {
       },
       where: {
         ...recordScope,
-        inspection_date: { gte: new Date(now.getFullYear(), now.getMonth() - 6, 1) },
+        inspection_date: { gte: trendStart },
       },
+      orderBy: { inspection_date: 'asc' },
     }),
     db.equipment.findMany({
       select: {
@@ -212,14 +227,9 @@ async function exportDashboard(scope: DataScopeType) {
     return total === 0 ? 0 : Math.round((qualified / total) * 1000) / 10
   }
 
-  const monthly = new Map<string, { count: number; qualified: number }>()
   const categories = new Map<string, { code: string; name: string; total: number; qualified: number }>()
   for (const record of records) {
-    const month = format(record.inspection_date, 'MM')
-    const monthEntry = monthly.get(month) ?? { count: 0, qualified: 0 }
     for (const item of record.data_items) {
-      monthEntry.count += 1
-      if (item.is_qualified) monthEntry.qualified += 1
       const category = item.part.category
       const categoryEntry = categories.get(category.code) ?? {
         code: category.code,
@@ -231,24 +241,29 @@ async function exportDashboard(scope: DataScopeType) {
       if (item.is_qualified) categoryEntry.qualified += 1
       categories.set(category.code, categoryEntry)
     }
-    monthly.set(month, monthEntry)
   }
+
+  const pendingTasks = scope === 'all'
+    ? await db.task.count({ where: { status: { in: ['待办', '进行中'] } } })
+    : 0
 
   const data = {
     totalInspections,
     thisMonthInspections,
     overallQualifiedRate: calculateRate(qualifiedItems),
     thisMonthQualifiedRate: calculateRate(thisMonthQualifiedItems),
-    monthlyTrend: Array.from(monthly.entries()).map(([month, value]) => ({
-      month,
-      count: value.count,
-      qualifiedRate: value.count === 0 ? 0 : Math.round((value.qualified / value.count) * 1000) / 10,
+    monthlyTrend: monthlyTrendRaw.map((row) => ({
+      month: row.month.slice(5),
+      count: Number(row.count),
+      qualifiedRate: row.count > 0 ? Math.round((Number(row.qualified) / Number(row.count)) * 1000) / 10 : 0,
     })),
-    categoryRates: Array.from(categories.values()).map((value) => ({
-      code: value.code,
-      name: value.name,
-      qualifiedRate: value.total === 0 ? 0 : Math.round((value.qualified / value.total) * 1000) / 10,
-    })),
+    categoryRates: Array.from(categories.values())
+      .sort((left, right) => left.code.localeCompare(right.code))
+      .map((value) => ({
+        code: value.code,
+        name: value.name,
+        qualifiedRate: value.total === 0 ? 0 : Math.round((value.qualified / value.total) * 1000) / 10,
+      })),
     equipmentHealth: equipment.flatMap((item) => {
       const latestRecord = item.inspection_records[0]
       if (!latestRecord) return []
@@ -260,7 +275,7 @@ async function exportDashboard(scope: DataScopeType) {
         qualifiedRate: total === 0 ? 0 : Math.round((qualified / total) * 1000) / 10,
       }]
     }),
-    pendingTasks: 0,
+    pendingTasks,
   }
 
   // 月度趋势

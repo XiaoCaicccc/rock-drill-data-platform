@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { requireDataScopeResource, type DataScopeType } from '@/lib/permissions'
 
-// ─── 核心查询逻辑（导出供 /api/export 复用） ───
+// ─── 核心查询逻辑 ───
 
 type EquipmentDashboardRow = {
   equipmentId: string
@@ -24,11 +24,17 @@ type RecentInspectionRow = {
   _count: { data_items: number }
 }
 
+function getDashboardDateRange(now = new Date()) {
+  return {
+    thisMonthStart: new Date(now.getFullYear(), now.getMonth(), 1),
+    lastMonthStart: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+    lastMonthEnd: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+    trendStart: new Date(now.getFullYear(), now.getMonth() - 6, 1),
+  }
+}
+
 async function getDashboardData(scope: DataScopeType) {
-  const now = new Date()
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+  const { thisMonthStart, lastMonthStart, lastMonthEnd, trendStart } = getDashboardDateRange()
   const dashboardOnly = scope === 'dashboard_only'
   const includeNonQualityTasks = scope === 'all'
 
@@ -87,7 +93,7 @@ async function getDashboardData(scope: DataScopeType) {
         SUM(CASE WHEN di.is_qualified = true THEN 1 ELSE 0 END) AS qualified
       FROM inspection_record r
       JOIN inspection_data_item di ON di.record_id = r.id
-      WHERE r.inspection_date >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '6 months'
+      WHERE r.inspection_date >= ${trendStart}
       GROUP BY TO_CHAR(r.inspection_date, 'YYYY-MM')
       ORDER BY month ASC
     `),
