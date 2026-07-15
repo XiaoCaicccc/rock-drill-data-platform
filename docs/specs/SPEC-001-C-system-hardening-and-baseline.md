@@ -338,10 +338,19 @@ Static Verification 与 Runtime Verification 必须分别记录；本地环境�
 
 ## C-2C-3A Parameter Analysis Composite Matching Regression
 
-**Status**: Implementation / Pending CI Verification.
+**Status**: CI Verification PASS.
 
 - The regression gate reuses the current parameter-analysis matching contract: `record_id + part_revision_id + selected parameter pair`.
 - The API continues to query each selected parameter independently and uses the same pure matching rule as the tests; no API request or response contract changes.
 - Missing or empty `part_revision_id` values are excluded. In the current model, historical unknown versions are represented by a missing revision id and are not inferred from other records.
 - The tests do not connect to a database, Railway, production credentials, or `prisma/dev.db`.
 - C-2C-3B inspection/export regression coverage and C-2C-3C legacy asset disposition remain pending.
+
+### C-2C-3A CI Verification Evidence
+
+- Commit: `d4b473b`; GitHub Actions Run: `29383992320`; environment: Node 20 CI.
+- `npm test` executed 17 tests: parameter-analysis 8/8 PASS and report-workflow 9/9 PASS, with 0 failures and normal process exit.
+- Prisma Validate, Prisma Generate, temporary PostgreSQL Migration Apply, TypeScript, lint, and build all passed.
+- The shared `src/lib/parameter-analysis.ts` rule keeps `record_id`, `part_revision_id`, and parameter identity in the composite match. Different revisions do not match; missing or empty revisions are excluded and cannot pollute known-version results.
+- This verification did not change the API contract, permissions, Data Scope, correlation, scatter-plot, or histogram calculations.
+- Existing non-blocking CI warnings remain recorded above and are not addressed by this task. C-2C-3B, C-2C-3C, C-2C overall, C-2B local verification, and SPEC-001-C remain open.

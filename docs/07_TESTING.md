@@ -184,10 +184,18 @@ Environment: GitHub Actions Node 20, Run `29381888019`.
 
 ## C-2C-3A Parameter Analysis Regression Gate
 
-**Status**: Implementation / Pending CI Verification.
+**Status**: CI Verification PASS.
 
 - Test entry: `tests/parameter-analysis.test.ts` through `npm test`.
 - It calls the same pure matching rule used by `GET /api/analysis/param-comparison`.
 - Coverage verifies matching requires the record id, part revision id, and selected parameter pair; record-only and cross-revision matches are rejected.
 - Missing or empty revision ids are excluded and cannot pollute known-version matches.
 - This test is isolated from Prisma, Railway, production credentials, and `prisma/dev.db`.
+
+### CI evidence
+
+- Commit `d4b473b`, GitHub Actions Run `29383992320`, Node 20 CI environment.
+- `npm test` ran both explicit files: 17 tests passed, 0 failed; parameter-analysis 8/8 and report-workflow 9/9.
+- Prisma Validate, Prisma Generate, temporary PostgreSQL Migration Apply, TypeScript, lint, and build passed. The test process exited normally.
+- The test is a pure regression gate: it does not connect to Railway, a production database, or `prisma/dev.db`.
+- Existing non-blocking warnings remain recorded in the C-2C-2 CI section. C-2C-3B, C-2C-3C, C-2C overall, C-2B, and SPEC-001-C are not closed by this result.
