@@ -58,3 +58,6 @@ test('unknown stored statuses are rejected from the managed lifecycle', () => {
   assert.equal(getReportWorkflowStatus('unexpected'), 'unknown')
   assert.throws(
     () => assertManagedLifecycleStatus('unexpected'),
+    (error: unknown) => error instanceof ReportWorkflowError && error.status === 409,
+  )
+})
