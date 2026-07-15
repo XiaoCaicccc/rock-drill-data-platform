@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { requireDataScopeResource } from '@/lib/permissions'
+import {
+  buildInspectionRecordFilters,
+  normalizeInspectionFilterParams,
+} from '@/lib/inspection-filters'
 
 // ─── GET: 检测记录列表（按角色过滤） ───
 
@@ -10,26 +14,15 @@ export async function GET(request: NextRequest) {
   if (access instanceof Response) return access
 
   const { searchParams } = new URL(request.url)
-  const search = searchParams.get('search') ?? searchParams.get('keyword') ?? ''
-  const categoryId = searchParams.get('categoryId') ?? ''
-  const resultFilter = searchParams.get('result') ?? searchParams.get('status') ?? ''
-  const startDate = searchParams.get('startDate') ?? ''
-  const endDate = searchParams.get('endDate') ?? ''
+  const filters = normalizeInspectionFilterParams(searchParams)
   const page = Math.max(1, Number(searchParams.get('page')) || 1)
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get('pageSize')) || 20))
 
-  const parseDate = (value: string, endOfDay: boolean) => {
-    if (!value) return null
-    const parsed = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
-    return Number.isNaN(parsed.getTime()) ? null : parsed
-  }
-
-  const start = parseDate(startDate, false)
-  const end = parseDate(endDate, true)
-  if ((startDate && !start) || (endDate && !end)) {
+  const { where: filterWhere, error: filterError } = buildInspectionRecordFilters(filters)
+  if (filterError === 'invalid_date') {
     return NextResponse.json({ error: '日期格式无效' }, { status: 400 })
   }
-  if (start && end && start > end) {
+  if (filterError === 'invalid_date_range') {
     return NextResponse.json({ error: '起始日期不能晚于结束日期' }, { status: 400 })
   }
 
@@ -41,43 +34,7 @@ export async function GET(request: NextRequest) {
 
   const where: Prisma.inspection_recordWhereInput = {
     ...scopeWhere,
-    ...(search
-      ? {
-          OR: [
-            { record_no: { contains: search, mode: 'insensitive' } },
-            { inspector: { contains: search, mode: 'insensitive' } },
-            { batch_no: { contains: search, mode: 'insensitive' } },
-            {
-              data_items: {
-                some: {
-                  part: {
-                    OR: [
-                      { name: { contains: search, mode: 'insensitive' } },
-                      { code: { contains: search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              },
-            },
-          ],
-        }
-      : {}),
-    ...(resultFilter ? { overall_result: resultFilter } : {}),
-    ...(categoryId
-      ? {
-          data_items: {
-            some: { part: { category_id: categoryId } },
-          },
-        }
-      : {}),
-    ...(start || end
-      ? {
-          inspection_date: {
-            ...(start ? { gte: start } : {}),
-            ...(end ? { lte: end } : {}),
-          },
-        }
-      : {}),
+    ...filterWhere,
   }
 
   const [total, records] = await Promise.all([

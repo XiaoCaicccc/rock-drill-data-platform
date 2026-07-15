@@ -199,3 +199,12 @@ Environment: GitHub Actions Node 20, Run `29381888019`.
 - Prisma Validate, Prisma Generate, temporary PostgreSQL Migration Apply, TypeScript, lint, and build passed. The test process exited normally.
 - The test is a pure regression gate: it does not connect to Railway, a production database, or `prisma/dev.db`.
 - Existing non-blocking warnings remain recorded in the C-2C-2 CI section. C-2C-3B, C-2C-3C, C-2C overall, C-2B, and SPEC-001-C are not closed by this result.
+
+## C-2C-3B Inspection Ledger and Export Filter Regression Gate
+
+**Status**: Implementation / Pending CI Verification.
+
+- Test entry: `tests/inspection-filters.test.ts` through `npm test`.
+- The ledger and export call the same `normalizeInspectionFilterParams` and `buildInspectionRecordFilters` functions. The tests cover empty search normalization, record number, part name/code relation filters, inspector, batch number, result, date boundaries, and combined filters.
+- Export-only `equipment_id` handling and ledger-only pagination remain Route-specific. Authentication and Data Scope are not part of this pure filter test.
+- The test does not connect to Prisma, Railway, a production database, or `prisma/dev.db`.

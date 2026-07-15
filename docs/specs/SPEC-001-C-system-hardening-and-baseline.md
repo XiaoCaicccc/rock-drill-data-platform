@@ -354,3 +354,13 @@ Static Verification 与 Runtime Verification 必须分别记录；本地环境�
 - The shared `src/lib/parameter-analysis.ts` rule keeps `record_id`, `part_revision_id`, and parameter identity in the composite match. Different revisions do not match; missing or empty revisions are excluded and cannot pollute known-version results.
 - This verification did not change the API contract, permissions, Data Scope, correlation, scatter-plot, or histogram calculations.
 - Existing non-blocking CI warnings remain recorded above and are not addressed by this task. C-2C-3B, C-2C-3C, C-2C overall, C-2B local verification, and SPEC-001-C remain open.
+
+## C-2C-3B Inspection Ledger and Export Filter Contract Regression
+
+**Status**: Implementation / Pending CI Verification.
+
+- The inspection ledger and inspection export reuse `src/lib/inspection-filters.ts` for search normalization and business filter construction; authentication and Data Scope remain in each Route.
+- Shared coverage includes record number, part name and code through `data_items.part`, inspector, batch number, result, category, and the existing UTC date boundaries. Empty search values do not create a Prisma `contains` condition.
+- Export keeps its existing `equipment_id` filter and legacy `date_from` / `date_to` aliases; ledger keeps its existing pagination and response shape.
+- The regression tests are pure and do not connect to Prisma, Railway, production credentials, or `prisma/dev.db`.
+- C-2C-3C legacy asset disposition, C-2C overall, C-2B local verification, and SPEC-001-C remain pending.

@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { requireDataScopeResource, type DataScopeType } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import {
+  buildInspectionRecordFilters,
+  normalizeInspectionFilterParams,
+} from '@/lib/inspection-filters'
 
 // ─── CSV 工具 ───
 
@@ -58,63 +62,21 @@ export async function GET(request: NextRequest) {
 // ─── 导出检测台账 ───
 
 async function exportInspections(params: URLSearchParams, scope: DataScopeType) {
-  const search = params.get('search') || params.get('keyword') || ''
-  const categoryId = params.get('categoryId') || ''
+  const filters = normalizeInspectionFilterParams(params, { includeLegacyDateAliases: true })
   const equipmentId = params.get('equipment_id') || ''
-  const result = params.get('result') || params.get('status') || ''
-  const startDateValue = params.get('startDate') || params.get('date_from') || ''
-  const endDateValue = params.get('endDate') || params.get('date_to') || ''
-
-  const startDate = startDateValue ? new Date(`${startDateValue}T00:00:00.000Z`) : null
-  const endDate = endDateValue ? new Date(`${endDateValue}T23:59:59.999Z`) : null
-  if ((startDateValue && Number.isNaN(startDate?.getTime())) || (endDateValue && Number.isNaN(endDate?.getTime()))) {
+  const { where: filterWhere, error: filterError } = buildInspectionRecordFilters(filters)
+  if (filterError === 'invalid_date') {
     throw new Error('日期格式无效')
   }
-  if (startDate && endDate && startDate > endDate) {
+  if (filterError === 'invalid_date_range') {
     throw new Error('起始日期不能晚于结束日期')
   }
 
   const records = await db.inspection_record.findMany({
     where: {
       ...qualityScopeWhere(scope),
-      ...(search
-        ? {
-            OR: [
-              { record_no: { contains: search, mode: 'insensitive' } },
-              { inspector: { contains: search, mode: 'insensitive' } },
-              { batch_no: { contains: search, mode: 'insensitive' } },
-              {
-                data_items: {
-                  some: {
-                    part: {
-                      OR: [
-                        { name: { contains: search, mode: 'insensitive' } },
-                        { code: { contains: search, mode: 'insensitive' } },
-                      ],
-                    },
-                  },
-                },
-              },
-            ],
-          }
-        : {}),
+      ...filterWhere,
       ...(equipmentId ? { equipment_id: equipmentId } : {}),
-      ...(result ? { overall_result: result } : {}),
-      ...(categoryId
-        ? {
-            data_items: {
-              some: { part: { category_id: categoryId } },
-            },
-          }
-        : {}),
-      ...(startDate || endDate
-        ? {
-            inspection_date: {
-              ...(startDate ? { gte: startDate } : {}),
-              ...(endDate ? { lte: endDate } : {}),
-            },
-          }
-        : {}),
     },
     include: {
       equipment: { select: { machine_no: true, model: true } },
