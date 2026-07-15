@@ -335,3 +335,13 @@ Static Verification 与 Runtime Verification 必须分别记录；本地环境�
 **Pending boundaries**:
 
 - C-2C-3 remains Pending. `scripts/test-param-analysis.ts`, `prisma/dev.db`, `bun.lock`, and `bun-types` remain unchanged;
+
+## C-2C-3A Parameter Analysis Composite Matching Regression
+
+**Status**: Implementation / Pending CI Verification.
+
+- The regression gate reuses the current parameter-analysis matching contract: `record_id + part_revision_id + selected parameter pair`.
+- The API continues to query each selected parameter independently and uses the same pure matching rule as the tests; no API request or response contract changes.
+- Missing or empty `part_revision_id` values are excluded. In the current model, historical unknown versions are represented by a missing revision id and are not inferred from other records.
+- The tests do not connect to a database, Railway, production credentials, or `prisma/dev.db`.
+- C-2C-3B inspection/export regression coverage and C-2C-3C legacy asset disposition remain pending.

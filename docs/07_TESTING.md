@@ -181,3 +181,13 @@ Environment: GitHub Actions Node 20, Run `29381888019`.
 
 - Existing ESLint warnings (3), Next.js middleware convention deprecation and build warnings, GitHub Actions Node 20 action-runtime deprecation, and temporary PostgreSQL locale/trust notices were recorded. They did not block this CI run and are not C-2C-2 failures;
 - Their treatment belongs to later, scoped maintenance work. This record does not close C-2C-3, C-2B, or SPEC-001-C.
+
+## C-2C-3A Parameter Analysis Regression Gate
+
+**Status**: Implementation / Pending CI Verification.
+
+- Test entry: `tests/parameter-analysis.test.ts` through `npm test`.
+- It calls the same pure matching rule used by `GET /api/analysis/param-comparison`.
+- Coverage verifies matching requires the record id, part revision id, and selected parameter pair; record-only and cross-revision matches are rejected.
+- Missing or empty revision ids are excluded and cannot pollute known-version matches.
+- This test is isolated from Prisma, Railway, production credentials, and `prisma/dev.db`.

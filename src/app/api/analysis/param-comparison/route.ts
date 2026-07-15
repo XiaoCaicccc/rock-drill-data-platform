@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
 import { requireDataScopeResource } from '@/lib/permissions'
+import { pairParameterAnalysisItems } from '@/lib/parameter-analysis'
 
 export async function GET(req: NextRequest) {
   try {
@@ -83,16 +84,6 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    const buildMatchKey = (recordId: string, revisionId: string) =>
-      [recordId, revisionId, paramAId, paramBId].join(':')
-
-    // 按 record_id + part_revision_id + 当前参数对建 map。
-    const mapA = new Map<string, (typeof itemsA)[number]>()
-    for (const item of itemsA) {
-      if (!item.part_revision_id) continue
-      mapA.set(buildMatchKey(item.record_id, item.part_revision_id), item)
-    }
-
     // 取 paramB 的所有数据项
     const itemsB = await db.inspection_data_item.findMany({
       where: { ...whereBase, param_item_id: paramBId, value_number: { not: null } },
@@ -122,10 +113,10 @@ export async function GET(req: NextRequest) {
     const valuesA: number[] = []
     const valuesB: number[] = []
 
-    for (const itemB of itemsB) {
-      if (!itemB.part_revision_id) continue
-      const itemA = mapA.get(buildMatchKey(itemB.record_id, itemB.part_revision_id))
-      if (!itemA || itemA.value_number == null || itemB.value_number == null) continue
+    const matchedItems = pairParameterAnalysisItems(itemsA, itemsB, paramAId, paramBId)
+
+    for (const { itemA, itemB } of matchedItems) {
+      if (itemA.value_number == null || itemB.value_number == null) continue
 
       const vA = itemA.value_number
       const vB = itemB.value_number
