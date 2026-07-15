@@ -322,3 +322,16 @@ Static Verification 与 Runtime Verification 必须分别记录；本地环境�
 - The first tests call the real report lifecycle rules and cover legal transitions, published reports not re-entering an editable lifecycle, and legacy/unknown status rejection.
 - Tests do not connect to Railway, a production database, or `prisma/dev.db`; CI runs them after TypeScript and before lint.
 - GitHub Actions on Node 20 is the verification authority. Local Windows execution remains pending until Node 20 is installed.
+
+## C-2C-2 CI Verification Update
+
+**Status**: CI Verification PASS.
+
+- Evidence: GitHub Actions Run `29381888019`, using the Node 20 CI environment;
+- `npm test` ran `tsx --test tests/report-workflow.test.ts`: 9 tests passed, 0 failed, and the process exited normally;
+- Prisma Validate, Prisma Generate, Migration Apply, TypeScript, lint, and build all passed;
+- Tests did not connect to Railway, a production database, or `prisma/dev.db`.
+
+**Pending boundaries**:
+
+- C-2C-3 remains Pending. `scripts/test-param-analysis.ts`, `prisma/dev.db`, `bun.lock`, and `bun-types` remain unchanged;

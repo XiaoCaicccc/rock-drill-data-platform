@@ -166,3 +166,18 @@ Status: Implementation / Pending CI Verification.
 - Coverage: legal `draft -> reviewing`, `reviewing -> draft`, and `reviewing -> published` transitions; direct draft publishing, published rollback/reviewing, legacy archived, and unknown states are rejected.
 - Isolation: tests call real rules in `src/lib/report-workflow.ts`; they do not request Railway, connect to a production database, or use `prisma/dev.db`.
 - CI runs `npm test` after TypeScript and before lint. GitHub Actions on Node 20 is the PASS authority; local Windows execution remains pending Node 20 installation.
+
+## SPEC-001-C C-2C-2 CI Verification
+
+Status: PASS for C-2C-2 only.
+Environment: GitHub Actions Node 20, Run `29381888019`.
+
+- Command: `tsx --test tests/report-workflow.test.ts` through `npm test`;
+- Result: 9 tests passed, 0 failed; the TAP process completed normally without a Prisma Client import hang;
+- Prisma Validate, Prisma Generate, temporary PostgreSQL Migration Apply, TypeScript, lint, and build all passed;
+- The tests do not connect to Railway, a production database, or `prisma/dev.db`.
+
+### Non-blocking CI warnings
+
+- Existing ESLint warnings (3), Next.js middleware convention deprecation and build warnings, GitHub Actions Node 20 action-runtime deprecation, and temporary PostgreSQL locale/trust notices were recorded. They did not block this CI run and are not C-2C-2 failures;
+- Their treatment belongs to later, scoped maintenance work. This record does not close C-2C-3, C-2B, or SPEC-001-C.
