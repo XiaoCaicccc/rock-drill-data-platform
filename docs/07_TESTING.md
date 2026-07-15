@@ -147,3 +147,13 @@ Static Verification 与 Runtime Verification 必须分开记录。
 | Next.js Build | PASS |
 
 该工作流的 `DATABASE_URL` 仅指向 GitHub Actions 临时 PostgreSQL；未连接 Railway 或生产数据库，未使用 `prisma db push`。本记录仅证明 CI 门禁；Railway 最新 Docker Build、Deploy 与基础访问需在实际生产部署后单独记录。
+
+## SPEC-001-C C-2B Local Verification
+
+状态：BLOCKED
+环境：Windows 本机，2026-07-15。
+
+- 已确认当前 Node 为 `v22.17.0`，不满足项目冻结范围 `>=20.19.0 <21`；未发现可用 Node 20；
+- 因此未执行 `npm ci`、Prisma Validate/Generate、TypeScript、lint、build 或 `dev`；未将 Node 22 作为替代验证环境；
+- Docker Desktop Linux Engine 未运行，Compose 服务与本地开发服务也未验证；
+- 本记录不代表仓库代码失败。待用户安装 Node 20 并恢复 Docker 后，必须从 `npm ci` 开始重新执行完整 Windows 验证链，完成前 C-2B 不得标记 PASS。

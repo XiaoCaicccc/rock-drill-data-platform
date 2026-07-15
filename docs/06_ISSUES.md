@@ -36,11 +36,11 @@
 ## ISSUE-004: Local Verification Environment
 
 - 类型：Dev Environment
-- 状态：Open
-- 后续归属：Developer Experience / CI
-- 描述：本地曾出现 Node/npx 类型检查执行异常，以及 Docker Compose 的 ps、pull、up 无响应或无法拉取镜像的问题。
+- 状态：Blocked
+- 后续归属：SPEC-001-C / C-2B
+- 描述：Windows 本机曾出现 Node/npx 类型检查执行异常，以及 Docker Compose 的 ps、pull、up 无响应或无法拉取镜像的问题。当前已确认仅有 Node `v22.17.0`，不满足项目冻结基线 `>=20.19.0 <21`；未发现可用 Node 20，Docker Desktop Linux Engine 也未运行。
 - 影响：本地无法稳定完成 TypeScript、数据库和浏览器运行验证，生产环境承担了过多验证压力。
-- 后续要求：独立修复 Node PATH/终端上下文和 Docker Desktop/Compose 网络问题；在 CI 中保留类型检查、构建和迁移检查。
+- 后续要求：用户安装符合范围的 Node 20 并恢复 Docker Desktop 后，重新执行本地验证链；在 CI 中保留类型检查、构建和迁移检查。本项是环境前置条件，不是仓库代码失败。
 
 ## ISSUE-005: AI Coding Agent Collaboration Discipline
 

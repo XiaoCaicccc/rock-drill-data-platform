@@ -179,18 +179,24 @@ Railway 最新 Docker Build、Deploy 与应用基础访问尚未在本项记录�
 
 ### C-2B Windows Local Verification Baseline
 
-**状态**：Implementation / Pending Local Verification。
+**状态**：Implementation Complete / Local Verification Blocked。
 
 - 统一 Windows、CI 与 Docker 的 Node 20 本地开发基线，并记录 Node/PATH 与 PowerShell `npm.ps1` 的诊断边界；
 - 使用零依赖 Node 脚本替代 `build` 中的 `cp -r` 与 `dev` 中的 `tee`，保持 standalone 资产复制和开发日志可用；
 - 不自动安装系统软件、不修改用户 PATH；Node 可用后再执行 Windows Runtime Verification；
 - 不修改业务功能、权限、Data Scope、API、Schema 或 Migration。
 
-### Deferred C-2C
+**阻塞记录**：当前 Windows 本机仅发现 Node `v22.17.0`，不满足冻结基线 `>=20.19.0 <21`，且未发现可用 Node 20。该情况是本地环境前置条件，不是仓库代码失败；Node 22 不用于本项验证。用户安装符合范围的 Node 20 后，必须重新执行 `npm ci`、`db:validate`、`db:generate`、`typecheck`、`lint`、`build` 与 `dev` 验证，完成前不得标记 PASS。本阻塞不影响独立开展 C-2C。
 
-- 自动化测试门禁、`scripts/test-param-analysis.ts` 的旧 SQLite 依赖、`prisma/dev.db`、`bun.lock` 与少量高价值回归测试。
+### C-2C Test Credibility and Legacy Asset Cleanup
 
-本轮不处理 C-2C。
+**状态**：Audit Complete / Implementation Plan Pending。
+
+- 当前没有 `test` 脚本、测试框架或 CI 测试门禁；唯一 `scripts/test-param-analysis.ts` 使用 SQLite `prisma/dev.db`，且保留了已过时的 `record_id` 单键分析匹配；
+- `prisma/dev.db` 与 `bun.lock` 仍由 Git 跟踪，但当前 npm、CI、Docker 与项目文档均不以它们作为运行基线；
+- 后续仅处理旧资产弃用/清理与少量高价值自动化回归测试，不建设全量浏览器 E2E，不修改业务功能、权限、Data Scope、Schema 或历史 migration。
+
+本轮完成审计与实施计划，不删除上述资产。
 
 ## 4. 领域规则与状态机
 
