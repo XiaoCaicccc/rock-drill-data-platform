@@ -305,3 +305,20 @@ Static Verification 与 Runtime Verification 必须分别记录；本地环境�
 - [ ] 工程验证链与 CI 覆盖已验证。
 - [ ] 生产部署与运行时证据已记录。
 - [ ] 文档、Issue、测试记录和 Closure 已同步。
+
+## C-2C Implementation Update
+
+**Status**: C-2C-1 Legacy Asset Boundary Defined; C-2C-2 Implementation / Pending CI Verification.
+
+### C-2C-1 Legacy Asset Boundary
+
+- `scripts/test-param-analysis.ts` and `prisma/dev.db` are historical SQLite verification assets, not trusted test entry points for the PostgreSQL production baseline; retain them until the replacement gate passes CI, then decide deletion or migration in C-2C-3.
+- `bun.lock` is not used by npm, CI, or Docker. It remains tracked for now; C-2C-3 must confirm npm is the sole package manager and review `bun-types` separately before any cleanup.
+- Historical documents describing the SQLite phase remain historical records and are not rewritten.
+
+### C-2C-2 Minimum Automated Test Gate
+
+- Reuse locked `tsx` with Node built-in `node:test` through a one-shot `npm test` command.
+- The first tests call the real report lifecycle rules and cover legal transitions, published reports not re-entering an editable lifecycle, and legacy/unknown status rejection.
+- Tests do not connect to Railway, a production database, or `prisma/dev.db`; CI runs them after TypeScript and before lint.
+- GitHub Actions on Node 20 is the verification authority. Local Windows execution remains pending until Node 20 is installed.

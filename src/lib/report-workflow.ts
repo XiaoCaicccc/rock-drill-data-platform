@@ -110,7 +110,7 @@ async function loadReportForWorkflow(
   return report
 }
 
-function assertManagedLifecycleStatus(status: string): ReportLifecycleStatus {
+export function assertManagedLifecycleStatus(status: string): ReportLifecycleStatus {
   const workflowStatus = getReportWorkflowStatus(status)
   if (workflowStatus === 'legacy_archived') {
     throw new ReportWorkflowError('历史已归档报告仅兼容读取，不能进入第一版生命周期流转', 409)

@@ -157,3 +157,12 @@ Static Verification 与 Runtime Verification 必须分开记录。
 - 因此未执行 `npm ci`、Prisma Validate/Generate、TypeScript、lint、build 或 `dev`；未将 Node 22 作为替代验证环境；
 - Docker Desktop Linux Engine 未运行，Compose 服务与本地开发服务也未验证；
 - 本记录不代表仓库代码失败。待用户安装 Node 20 并恢复 Docker 后，必须从 `npm ci` 开始重新执行完整 Windows 验证链，完成前 C-2B 不得标记 PASS。
+
+## SPEC-001-C C-2C Minimum Automated Test Gate
+
+Status: Implementation / Pending CI Verification.
+
+- Test command: `npm test`, using locked `tsx` and Node built-in `node:test`; it exits after one run and returns non-zero on failures.
+- Coverage: legal `draft -> reviewing`, `reviewing -> draft`, and `reviewing -> published` transitions; direct draft publishing, published rollback/reviewing, legacy archived, and unknown states are rejected.
+- Isolation: tests call real rules in `src/lib/report-workflow.ts`; they do not request Railway, connect to a production database, or use `prisma/dev.db`.
+- CI runs `npm test` after TypeScript and before lint. GitHub Actions on Node 20 is the PASS authority; local Windows execution remains pending Node 20 installation.
