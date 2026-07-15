@@ -1,6 +1,6 @@
 # 当前项目状态
 
-更新时间：2026-07-14
+更新时间：2026-07-15
 
 ## 产品定位
 
@@ -34,6 +34,19 @@ Achievement：
 - Railway production 已完成六类身份运行时验收并通过。
 
 详情见 [SPEC-001-B Closure](./specs/SPEC-001-B-CLOSURE.md)。
+
+### SPEC-001 MVP Completion
+
+状态：Completed
+
+Achievement：
+
+- SPEC-001-A 已完成 Data Scope 授权闭环，SPEC-001-B 已完成报告生命周期闭环；
+- 质量部门 MVP 已具备受控查询、检测台账、参数分析、导出和可审计报告发布能力；
+- SPEC-001-C 已完成查询/导出一致性、报告弹窗可用性、确定性 CI 与 migration gate，以及首批自动化回归测试；
+- SPEC-001-C 尚未完成的 Windows Node 20 本地验证、C-2C-3B CI 验证和旧资产处置继续跟踪，不影响 MVP 业务完成，但不得标记为 PASS。
+
+阶段完成记录见 [SPEC-001 Completion](./SPEC-001-COMPLETION.md)。
 
 ## 当前冻结规则
 
