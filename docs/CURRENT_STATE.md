@@ -37,7 +37,7 @@ Achievement：
 
 ### SPEC-001 MVP Completion
 
-状态：Completed
+状态：Functional Complete
 
 Achievement：
 
@@ -45,8 +45,30 @@ Achievement：
 - 质量部门 MVP 已具备受控查询、检测台账、参数分析、导出和可审计报告发布能力；
 - SPEC-001-C 已完成查询/导出一致性、报告弹窗可用性、确定性 CI 与 migration gate，以及首批自动化回归测试；
 - SPEC-001-C 尚未完成的 Windows Node 20 本地验证、C-2C-3B CI 验证和旧资产处置继续跟踪，不影响 MVP 业务完成，但不得标记为 PASS。
+- 核心业务功能已实现，但 SPEC-001 Closure 当前被 Review Audit 阻塞。
 
 阶段完成记录见 [SPEC-001 Completion](./SPEC-001-COMPLETION.md)。
+
+## Review Status
+
+状态：BLOCKED
+
+原因：
+
+SPEC-001 Review Audit 发现 6 个 Blocking Issues：
+
+- AUTH-001
+- AUTH-002
+- FLOW-001
+- REPORT-001
+- DATA-001
+- ANALYSIS-001
+
+说明：
+
+这些问题需要通过独立修复 SPEC 关闭后，才能重新执行 Closure。
+
+Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态，但相关问题不得标记为已修复。
 
 ## 当前冻结规则
 
