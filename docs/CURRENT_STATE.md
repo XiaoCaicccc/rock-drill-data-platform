@@ -53,8 +53,8 @@ Achievement：
 
 状态：Implementation Completed / Security Findings Closed
 
-- AUTH-001：Closed。Server-side authoritative user check 已实现，自动化验证通过，CI 通过。
-- AUTH-002：Closed。inspection detail 已统一 resource authorization，六身份 API 回归通过，CI 通过。
+- AUTH-001：CLOSED。Server-side authoritative user check 已实现，自动化验证通过，CI 通过。
+- AUTH-002：CLOSED。inspection detail 已统一 resource authorization，六身份 API 回归通过，CI 通过。
 
 Runtime Verification：Deferred / Blocked
 
@@ -68,14 +68,13 @@ Runtime Verification：Deferred / Blocked
 
 SPEC-001 Review Audit Remaining Blocking Issues：
 
-- FLOW-001
-- REPORT-001
-- DATA-001
-- ANALYSIS-001
+- FLOW-001 → SPEC-001-E Inspection Business Integrity
+- REPORT-001 → SPEC-001-F Report Publication Consistency
+- DATA-001 + ANALYSIS-001 → SPEC-001-G Quality Metrics Correctness
 
 说明：
 
-这些剩余问题需要通过独立修复 SPEC 关闭后，才能重新执行 SPEC-001 Closure。
+SPEC-001-E、SPEC-001-F、SPEC-001-G 均尚未开始实施。这些剩余问题需要通过对应修复 SPEC 关闭后，才能重新执行 SPEC-001 Closure。
 
 Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUTH-002 已通过 SPEC-001-D 关闭；其余 Blocking Issues 不得提前标记为已修复。
 
