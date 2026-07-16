@@ -1,6 +1,6 @@
 # 当前项目状态
 
-更新时间：2026-07-15
+更新时间：2026-07-16
 
 ## 产品定位
 
@@ -49,16 +49,25 @@ Achievement：
 
 阶段完成记录见 [SPEC-001 Completion](./SPEC-001-COMPLETION.md)。
 
+## SPEC-001-D Security Hardening
+
+状态：Implementation Completed / Security Findings Closed
+
+- AUTH-001：Closed。Server-side authoritative user check 已实现，自动化验证通过，CI 通过。
+- AUTH-002：Closed。inspection detail 已统一 resource authorization，六身份 API 回归通过，CI 通过。
+
+Runtime Verification：Deferred / Blocked
+
+原因：缺少 Railway 目标环境验证条件，尚未取得目标部署版本与实际运行行为证据。该阻塞表示运行时验证条件不足，不表示代码或自动化验证失败。因此 SPEC-001-D 当前不标记为完全 Closed。
+
 ## Review Status
 
 状态：BLOCKED
 
 原因：
 
-SPEC-001 Review Audit 发现 6 个 Blocking Issues：
+SPEC-001 Review Audit Remaining Blocking Issues：
 
-- AUTH-001
-- AUTH-002
 - FLOW-001
 - REPORT-001
 - DATA-001
@@ -66,9 +75,9 @@ SPEC-001 Review Audit 发现 6 个 Blocking Issues：
 
 说明：
 
-这些问题需要通过独立修复 SPEC 关闭后，才能重新执行 Closure。
+这些剩余问题需要通过独立修复 SPEC 关闭后，才能重新执行 SPEC-001 Closure。
 
-Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态，但相关问题不得标记为已修复。
+Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUTH-002 已通过 SPEC-001-D 关闭；其余 Blocking Issues 不得提前标记为已修复。
 
 ## 当前冻结规则
 
