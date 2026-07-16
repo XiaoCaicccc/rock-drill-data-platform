@@ -1,5 +1,7 @@
 import type { UserRole } from '@prisma/client'
 import { auth } from '@/lib/auth'
+import { db } from '@/lib/db'
+import { resolveAuthoritativeUser } from '@/lib/authoritative-user'
 
 export type AppSession = {
   user: { id: string; role: UserRole; organization_id?: string | null }
@@ -66,9 +68,15 @@ function jsonError(error: string, status: number) {
 /** 未登录返回 401，否则返回带有已收窄类型的会话。 */
 export async function requireAuth(): Promise<AppSession | Response> {
   const session = await auth()
-  const user = session?.user as { id?: string; role?: UserRole; organization_id?: string | null } | undefined
+  const sessionUser = session?.user as { id?: string } | undefined
+  const user = await resolveAuthoritativeUser(sessionUser?.id, (userId) =>
+    db.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, organization_id: true, active: true },
+    }),
+  )
   if (!user?.id || !user.role) return jsonError('未登录', 401)
-  return { user: { id: user.id, role: user.role, organization_id: user.organization_id } }
+  return { user }
 }
 
 export async function requireRole(allowedRoles: UserRole[]): Promise<AppSession | Response> {
