@@ -143,7 +143,7 @@ const apiRequests = {
   )),
 }
 
-function useIdentity(databaseRole: UserRole, options: { active?: boolean; staleRole?: UserRole } = {}) {
+function setIdentity(databaseRole: UserRole, options: { active?: boolean; staleRole?: UserRole } = {}) {
   staleSession = {
     user: {
       id: 'session-user',
@@ -160,7 +160,7 @@ function useIdentity(databaseRole: UserRole, options: { active?: boolean; staleR
 }
 
 test('AUTH-001 rejects an old session immediately after its database user is disabled', async () => {
-  useIdentity('inspector', { active: false, staleRole: 'inspector' })
+  setIdentity('inspector', { active: false, staleRole: 'inspector' })
 
   const response = await apiRequests.list()
 
@@ -168,11 +168,11 @@ test('AUTH-001 rejects an old session immediately after its database user is dis
 })
 
 test('AUTH-001 applies database role downgrade and upgrade to the same old session', async () => {
-  useIdentity('inspector', { staleRole: 'admin' })
+  setIdentity('inspector', { staleRole: 'admin' })
   assert.equal((await apiRequests.export()).status, 403, 'downgraded stale admin must lose export')
   assert.equal((await apiRequests.list()).status, 200, 'downgraded user keeps current inspector access')
 
-  useIdentity('admin', { staleRole: 'viewer' })
+  setIdentity('admin', { staleRole: 'viewer' })
   assert.equal((await apiRequests.export()).status, 200, 'upgraded stale viewer gains current admin access')
 })
 
@@ -187,7 +187,7 @@ test('AUTH-002 enforces the six-identity matrix at the real inspection API handl
   }
 
   for (const [identity, endpointStatuses] of Object.entries(expected)) {
-    useIdentity(identity === 'disabled' ? 'admin' : identity as UserRole, {
+    setIdentity(identity === 'disabled' ? 'admin' : identity as UserRole, {
       active: identity !== 'disabled',
     })
     for (const [endpoint, status] of Object.entries(endpointStatuses)) {
@@ -198,7 +198,7 @@ test('AUTH-002 enforces the six-identity matrix at the real inspection API handl
 })
 
 test('AUTH-002 keeps inspector list, detail, and analysis inside the authorized quality scope', async () => {
-  useIdentity('inspector')
+  setIdentity('inspector')
   lastListWhere = undefined
   lastDetailWhere = undefined
   analysisWheres.length = 0
