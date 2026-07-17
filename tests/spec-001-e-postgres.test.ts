@@ -30,8 +30,8 @@ for (const scenario of scenarios) {
 
     const fixture = await openSpec001EPostgresFixture()
     try {
-      const module = await import('./helpers/spec-001-e-postgres-scenarios')
-      const result = await module.runSpec001EPostgresScenario(fixture, scenario.name)
+      const postgresScenarioModule = await import('./helpers/spec-001-e-postgres-scenarios')
+      const result = await postgresScenarioModule.runSpec001EPostgresScenario(fixture, scenario.name)
       assert.deepEqual(
         {
           committedRecords: result.committedRecords,
