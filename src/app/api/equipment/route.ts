@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { Prisma } from '@prisma/client'
-import { applyDataScope, requireAuth, requireOwnershipOrAdmin, requireRole } from '@/lib/permissions'
+import { applyDataScope, requireAuth, requireRole } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import {
+  deleteEquipment,
+  EquipmentMutationError,
+  updateEquipment,
+} from '@/lib/equipment-mutation-service'
 
 // ============================================================
 // Types
@@ -159,31 +164,17 @@ export async function PUT(request: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: '缺少设备 ID' }, { status: 400 })
     }
-    const current = await db.equipment.findUnique({ where: { id } })
-    if (!current) return NextResponse.json({ error: '设备不存在' }, { status: 404 })
-    const ownership = await requireOwnershipOrAdmin(current.created_by)
-    if (ownership instanceof Response) return ownership
-
     const data: Prisma.equipmentUpdateInput = {}
+    let normalizedMachineNo: string | undefined
+    let conflictDisplayMachineNo: string | undefined
 
     if (fields.machine_no !== undefined) {
       if (!fields.machine_no?.trim()) {
         return NextResponse.json({ error: '机头编号不能为空' }, { status: 400 })
       }
-      // Uniqueness check (exclude self)
-      const existing = await db.equipment.findFirst({
-        where: {
-          machine_no: fields.machine_no.trim(),
-          id: { not: id },
-        },
-      })
-      if (existing) {
-        return NextResponse.json(
-          { error: `机头编号 "${fields.machine_no}" 已被其他设备使用` },
-          { status: 409 },
-        )
-      }
-      data.machine_no = fields.machine_no.trim()
+      normalizedMachineNo = fields.machine_no.trim()
+      conflictDisplayMachineNo = fields.machine_no
+      data.machine_no = normalizedMachineNo
     }
 
     if (fields.model !== undefined) {
@@ -212,14 +203,22 @@ export async function PUT(request: NextRequest) {
       data.remark = fields.remark?.trim() ?? null
     }
 
-    const updated = await db.equipment.update({
-      where: { id },
+    const updated = await updateEquipment({
+      equipmentId: id,
       data,
+      normalizedMachineNo,
+      conflictDisplayMachineNo,
+      actor: { id: access.user.id, role: access.user.role },
+      request,
+    }, {
+      db,
+      audit: logAudit,
     })
-
-    await logAudit({ userId: access.user.id, action: 'UPDATE', entityType: 'equipment', entityId: id, before: { machine_no: current.machine_no, status: current.status }, after: { machine_no: updated.machine_no, status: updated.status }, request })
     return NextResponse.json({ equipment: updated })
   } catch (error) {
+    if (error instanceof EquipmentMutationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       return NextResponse.json({ error: '设备不存在' }, { status: 404 })
     }
@@ -242,25 +241,20 @@ export async function DELETE(request: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: '缺少设备 ID' }, { status: 400 })
     }
-    const current = await db.equipment.findUnique({ where: { id } })
-    if (!current) return NextResponse.json({ error: '设备不存在' }, { status: 404 })
-    const ownership = await requireOwnershipOrAdmin(current.created_by)
-    if (ownership instanceof Response) return ownership
-
-    // 保留装配历史的设备不可删除。
-    const installationCount = await db.equipment_part_installation.count({ where: { equipment_id: id } })
-    if (installationCount > 0) {
-      return NextResponse.json(
-        { error: `该设备下尚有 ${installationCount} 条装配历史，请先移除相关装配记录` },
-        { status: 409 },
-      )
-    }
-
-    await db.equipment.delete({ where: { id } })
-    await logAudit({ userId: access.user.id, action: 'DELETE', entityType: 'equipment', entityId: id, before: { machine_no: current.machine_no }, request })
+    await deleteEquipment({
+      equipmentId: id,
+      actor: { id: access.user.id, role: access.user.role },
+      request,
+    }, {
+      db,
+      audit: logAudit,
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {
+    if (error instanceof EquipmentMutationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
       return NextResponse.json({ error: '设备不存在' }, { status: 404 })
     }

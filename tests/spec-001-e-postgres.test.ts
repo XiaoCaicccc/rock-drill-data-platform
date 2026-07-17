@@ -46,3 +46,29 @@ for (const scenario of scenarios) {
     }
   })
 }
+
+const equipmentMutationScenarios = [
+  'PG-EQ-01: Equipment PUT audit failure rolls back mutation and success audit',
+  'PG-EQ-02: Equipment DELETE audit failure rolls back deletion and success audit',
+  'PG-EQ-03: Batch and Equipment PUT share the equipment-first lock',
+  'PG-EQ-04: Batch and Equipment DELETE share the lock and revalidate history',
+  'PG-EQ-05: concurrent equipment machine_no updates allow at most one success',
+] as const
+
+for (const scenario of equipmentMutationScenarios) {
+  test(scenario, async (context) => {
+    if (!process.env.DATABASE_URL) {
+      context.skip('DATABASE_URL is required; CI supplies PostgreSQL 16')
+      return
+    }
+
+    const fixture = await openSpec001EPostgresFixture()
+    try {
+      const postgresScenarioModule = await import('./helpers/spec-001-e-postgres-scenarios')
+      const result = await postgresScenarioModule.runSpec001EPostgresScenario(fixture, scenario)
+      assert.equal(result.integrityPreserved, true, JSON.stringify(result.proof))
+    } finally {
+      await fixture.close()
+    }
+  })
+}

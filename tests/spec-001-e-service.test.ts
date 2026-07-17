@@ -4,10 +4,21 @@ import test from 'node:test'
 import { Prisma } from '@prisma/client'
 import { InspectionDomainError } from '../src/lib/inspection-errors'
 import {
+  deleteEquipment,
+  EquipmentMutationError,
+  updateEquipment,
+} from '../src/lib/equipment-mutation-service'
+import {
   lockEquipmentAndAllInstallations,
   lockEquipmentAndInstallationsForPartRevisions,
 } from '../src/lib/inspection-equipment-lock'
 import { createInspectionBatch } from '../src/lib/inspection-integrity-service'
+import {
+  isRetryablePostgresTransactionError,
+  runSerializableTransactionWithRetry,
+  SerializableTransactionRetryExhaustedError,
+  type InteractiveTransactionDatabase,
+} from '../src/lib/serializable-transaction'
 import { validBatchRequest } from './helpers/spec-001-e-harness'
 
 type Scenario =
@@ -409,3 +420,553 @@ for (const retryError of [
     assert.equal(fixture.writes.audits, 1)
   })
 }
+
+function equipmentMutationFixture(options: {
+  missing?: boolean
+  installationCount?: number
+  auditFailure?: boolean
+  duplicateMachineNo?: boolean
+  updateError?: unknown
+} = {}) {
+  const rawCalls: Prisma.Sql[] = []
+  const events: string[] = []
+  const uniquenessQueries: unknown[] = []
+  let transactionClient: typeof tx | undefined
+  let mutationClient: typeof tx | undefined
+  let auditClient: typeof tx | undefined
+  const current = {
+    id: 'equipment-1',
+    machine_no: 'EQ-001',
+    model: 'M1',
+    manufacturer: null,
+    production_date: null,
+    status: '在用',
+    current_location: null,
+    total_working_hours: 0,
+    remark: null,
+    created_at: new Date('2026-07-17T00:00:00Z'),
+    updated_at: new Date('2026-07-17T00:00:00Z'),
+    created_by: 'user-1',
+  }
+  const installations = Array.from({ length: options.installationCount ?? 0 }, (_, index) => ({
+    id: `11111111-1111-4111-8111-${String(index + 1).padStart(12, '0')}`,
+    equipment_id: current.id,
+    part_revision_id: '22222222-2222-4222-8222-222222222222',
+    installed_at: new Date('2026-07-17T00:00:00Z'),
+    removed_at: null,
+  }))
+  const tx = {
+    $queryRaw: async (query: Prisma.Sql) => {
+      rawCalls.push(query)
+      events.push(rawCalls.length === 1 ? 'equipment-lock' : 'installation-lock')
+      if (rawCalls.length === 1) return options.missing ? [] : [{ id: current.id }]
+      return installations
+    },
+    equipment: {
+      findUnique: async () => {
+        events.push('equipment-reread')
+        return options.missing ? null : current
+      },
+      findFirst: async (query: unknown) => {
+        events.push('uniqueness-check')
+        uniquenessQueries.push(query)
+        return options.duplicateMachineNo ? { id: 'equipment-2' } : null
+      },
+      update: async ({ data }: { data: Record<string, unknown> }) => {
+        mutationClient = tx
+        events.push('update')
+        if (options.updateError) throw options.updateError
+        return { ...current, ...data }
+      },
+      delete: async () => {
+        mutationClient = tx
+        events.push('delete')
+        return current
+      },
+    },
+    auditLog: {
+      create: async () => ({ id: 'audit-1' }),
+    },
+  }
+  const transactionOptions: unknown[] = []
+  const db = {
+    $transaction: async (operation: (client: typeof tx) => Promise<unknown>, options: unknown) => {
+      transactionClient = tx
+      transactionOptions.push(options)
+      return operation(tx)
+    },
+  }
+  const audit = async (_params: unknown, client: typeof tx) => {
+    auditClient = client
+    events.push('audit')
+    if (options.auditFailure) throw new Error('audit failed')
+    return client.auditLog.create()
+  }
+
+  return {
+    current,
+    rawCalls,
+    events,
+    uniquenessQueries,
+    transactionOptions,
+    get transactionClient() { return transactionClient },
+    get mutationClient() { return mutationClient },
+    get auditClient() { return auditClient },
+    dependencies: {
+      db: db as unknown as InteractiveTransactionDatabase,
+      audit: audit as never,
+      sleep: async (_milliseconds: number) => undefined,
+      random: () => 0,
+    },
+  }
+}
+
+test('production equipment update locks, rereads, mutates, and audits in one transaction', async () => {
+  const fixture = equipmentMutationFixture()
+  const updated = await updateEquipment({
+    equipmentId: fixture.current.id,
+    data: { status: '停用' },
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+
+  assert.equal(updated.status, '停用')
+  assert.deepEqual(fixture.events, [
+    'equipment-lock',
+    'installation-lock',
+    'equipment-reread',
+    'update',
+    'audit',
+  ])
+  assert.match(fixture.rawCalls[0].sql, /FROM "equipment"[\s\S]*FOR UPDATE/)
+  assert.match(fixture.rawCalls[1].sql, /ORDER BY id[\s\S]*FOR UPDATE/)
+  assert.equal(fixture.mutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
+  assert.deepEqual(fixture.transactionOptions, [{
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  }])
+})
+
+test('equipment update audit failure rejects the production transaction', async () => {
+  const fixture = equipmentMutationFixture({ auditFailure: true })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: fixture.current.id,
+      data: { status: '停用' },
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    /audit failed/,
+  )
+  assert.equal(fixture.mutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
+})
+
+test('equipment update rechecks machine number uniqueness after locks and reread', async () => {
+  const fixture = equipmentMutationFixture({ duplicateMachineNo: true })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: fixture.current.id,
+      data: { machine_no: 'EQ-002' },
+      normalizedMachineNo: 'EQ-002',
+      conflictDisplayMachineNo: 'EQ-002',
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 409
+      && error.message === '机头编号 "EQ-002" 已被其他设备使用',
+  )
+  assert.deepEqual(fixture.events, [
+    'equipment-lock',
+    'installation-lock',
+    'equipment-reread',
+    'uniqueness-check',
+  ])
+  assert.equal(fixture.mutationClient, undefined)
+  assert.equal(fixture.auditClient, undefined)
+})
+
+test('equipment update preserves the original machine number in conflict messages', async () => {
+  const fixture = equipmentMutationFixture({ duplicateMachineNo: true })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: fixture.current.id,
+      data: { machine_no: 'EQ-002' },
+      normalizedMachineNo: 'EQ-002',
+      conflictDisplayMachineNo: ' EQ-002 ',
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 409
+      && error.message === '机头编号 " EQ-002 " 已被其他设备使用',
+  )
+  assert.deepEqual(fixture.uniquenessQueries, [{
+    where: { machine_no: 'EQ-002', id: { not: fixture.current.id } },
+    select: { id: true },
+  }])
+})
+
+test('machine number P2002 maps to the original 409 without retrying', async () => {
+  const collision = new Prisma.PrismaClientKnownRequestError('unique conflict', {
+    code: 'P2002',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: { target: ['machine_no'] },
+  })
+  const fixture = equipmentMutationFixture({ updateError: collision })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: fixture.current.id,
+      data: { machine_no: 'EQ-002' },
+      normalizedMachineNo: 'EQ-002',
+      conflictDisplayMachineNo: ' EQ-002 ',
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 409
+      && error.message === '机头编号 " EQ-002 " 已被其他设备使用',
+  )
+  assert.equal(fixture.transactionOptions.length, 1)
+})
+
+test('P2002 for another field is not mapped as a machine number conflict', async () => {
+  const collision = new Prisma.PrismaClientKnownRequestError('other unique conflict', {
+    code: 'P2002',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: { target: ['another_field'] },
+  })
+  const fixture = equipmentMutationFixture({ updateError: collision })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: fixture.current.id,
+      data: { status: '停用' },
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    (error: unknown) => error === collision,
+  )
+  assert.equal(fixture.transactionOptions.length, 1)
+})
+
+test('production equipment delete checks locked installation rows before mutation', async () => {
+  const fixture = equipmentMutationFixture({ installationCount: 2 })
+  await assert.rejects(
+    deleteEquipment({
+      equipmentId: fixture.current.id,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 409
+      && error.message === '该设备下尚有 2 条装配历史，请先移除相关装配记录',
+  )
+  assert.deepEqual(fixture.events, [
+    'equipment-lock',
+    'installation-lock',
+    'equipment-reread',
+  ])
+  assert.equal(fixture.mutationClient, undefined)
+  assert.equal(fixture.auditClient, undefined)
+})
+
+test('production equipment delete and audit use the same transaction and audit failure rejects', async () => {
+  const fixture = equipmentMutationFixture({ auditFailure: true })
+  await assert.rejects(
+    deleteEquipment({
+      equipmentId: fixture.current.id,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    /audit failed/,
+  )
+  assert.deepEqual(fixture.events, [
+    'equipment-lock',
+    'installation-lock',
+    'equipment-reread',
+    'delete',
+    'audit',
+  ])
+  assert.equal(fixture.mutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
+})
+
+test('equipment mutations preserve missing and ownership errors after locking', async () => {
+  const missing = equipmentMutationFixture({ missing: true })
+  await assert.rejects(
+    updateEquipment({
+      equipmentId: missing.current.id,
+      data: {},
+      actor: { id: 'user-1', role: 'engineer' },
+    }, missing.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 404 && error.message === '设备不存在',
+  )
+  assert.equal(missing.rawCalls.length, 1)
+
+  const missingDelete = equipmentMutationFixture({ missing: true })
+  await assert.rejects(
+    deleteEquipment({
+      equipmentId: missingDelete.current.id,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, missingDelete.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 404 && error.message === '设备不存在',
+  )
+  assert.equal(missingDelete.rawCalls.length, 1)
+
+  const owned = equipmentMutationFixture()
+  await assert.rejects(
+    deleteEquipment({
+      equipmentId: owned.current.id,
+      actor: { id: 'other-user', role: 'engineer' },
+    }, owned.dependencies),
+    (error: unknown) => error instanceof EquipmentMutationError
+      && error.status === 403 && error.message === '无权操作其他用户创建的资源',
+  )
+})
+
+test('equipment mutation retries the complete transaction with backoff outside it', async () => {
+  const fixture = equipmentMutationFixture()
+  const successfulTransaction = fixture.dependencies.db.$transaction
+  let attempts = 0
+  let transactionActive = false
+  const delays: number[] = []
+  fixture.dependencies.db = {
+    $transaction: async (...args: Parameters<typeof successfulTransaction>) => {
+      attempts += 1
+      transactionActive = true
+      try {
+        if (attempts === 1) throw Object.assign(new Error('conflict'), { code: 'P2034' })
+        return await successfulTransaction(...args)
+      } finally {
+        transactionActive = false
+      }
+    },
+  } as never
+  fixture.dependencies.sleep = async (milliseconds: number) => {
+    assert.equal(transactionActive, false)
+    delays.push(milliseconds)
+  }
+
+  await updateEquipment({
+    equipmentId: fixture.current.id,
+    data: { status: '停用' },
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+  assert.equal(attempts, 2)
+  assert.deepEqual(delays, [25])
+})
+
+async function exerciseSerializableRunner(errorFactory: (attempt: number) => unknown) {
+  let attempts = 0
+  let transactionActive = false
+  const delays: number[] = []
+  const isolationLevels: unknown[] = []
+  const result = await runSerializableTransactionWithRetry({
+    $transaction: async (operation, options) => {
+      attempts += 1
+      isolationLevels.push(options.isolationLevel)
+      transactionActive = true
+      try {
+        const error = errorFactory(attempts)
+        if (error) throw error
+        return await operation({} as Prisma.TransactionClient)
+      } finally {
+        transactionActive = false
+      }
+    },
+  }, async () => 'committed', {
+    random: () => 0,
+    sleep: async (milliseconds) => {
+      assert.equal(transactionActive, false)
+      delays.push(milliseconds)
+    },
+  })
+  return { result, attempts, delays, isolationLevels }
+}
+
+for (const [name, errorFactory] of [
+  ['40001', () => Object.assign(new Error('serialization'), { code: '40001' })],
+  ['40P01', () => Object.assign(new Error('deadlock'), { code: '40P01' })],
+  ['P2034', () => Object.assign(new Error('prisma conflict'), { code: 'P2034' })],
+  ['meta.code 40001', () => Object.assign(new Error('serialization'), { meta: { code: '40001' } })],
+  ['nested cause', () => Object.assign(new Error('wrapper'), {
+    cause: Object.assign(new Error('serialization'), { code: '40001' }),
+  })],
+] as const) {
+  test(`serializable runner retries ${name} with Serializable isolation`, async () => {
+    const result = await exerciseSerializableRunner((attempt) => (
+      attempt === 1 ? errorFactory() : undefined
+    ))
+    assert.equal(result.result, 'committed')
+    assert.equal(result.attempts, 2)
+    assert.deepEqual(result.delays, [25])
+    assert.deepEqual(result.isolationLevels, [
+      Prisma.TransactionIsolationLevel.Serializable,
+      Prisma.TransactionIsolationLevel.Serializable,
+    ])
+  })
+}
+
+test('serializable runner does not retry non-retryable or machine number P2002 errors', async () => {
+  for (const error of [
+    new Error('ordinary failure'),
+    new Prisma.PrismaClientKnownRequestError('machine conflict', {
+      code: 'P2002',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { target: ['machine_no'] },
+    }),
+  ]) {
+    let attempts = 0
+    await assert.rejects(runSerializableTransactionWithRetry({
+      $transaction: async () => {
+        attempts += 1
+        throw error
+      },
+    }, async () => undefined), (caught: unknown) => caught === error)
+    assert.equal(attempts, 1)
+  }
+})
+
+test('serializable runner caps attempts at three and uses deterministic two-stage backoff', async () => {
+  let attempts = 0
+  let transactionActive = false
+  const delays: number[] = []
+  const conflict = Object.assign(new Error('serialization'), { code: '40001' })
+  await assert.rejects(runSerializableTransactionWithRetry({
+    $transaction: async () => {
+      attempts += 1
+      transactionActive = true
+      try {
+        throw conflict
+      } finally {
+        transactionActive = false
+      }
+    },
+  }, async () => undefined, {
+    random: () => 0,
+    sleep: async (milliseconds) => {
+      assert.equal(transactionActive, false)
+      delays.push(milliseconds)
+    },
+  }), (error: unknown) => error instanceof SerializableTransactionRetryExhaustedError
+    && error.lastError === conflict)
+  assert.equal(attempts, 3)
+  assert.deepEqual(delays, [25, 75])
+})
+
+test('serializable runner accepts a custom Batch record number collision predicate', async () => {
+  let attempts = 0
+  const collision = new Prisma.PrismaClientKnownRequestError('record conflict', {
+    code: 'P2002',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: { target: ['record_no'] },
+  })
+  const result = await runSerializableTransactionWithRetry({
+    $transaction: async (operation) => {
+      attempts += 1
+      if (attempts === 1) throw collision
+      return operation({} as Prisma.TransactionClient)
+    },
+  }, async () => 'committed', {
+    sleep: async () => undefined,
+    isRetryable: (error) => error === collision,
+  })
+  assert.equal(result, 'committed')
+  assert.equal(attempts, 2)
+})
+
+test('serializable runner safely rejects a self-referential non-retryable cause', async () => {
+  const error: { code: string; cause?: unknown } = { code: 'OTHER' }
+  error.cause = error
+  let attempts = 0
+  await assert.rejects(runSerializableTransactionWithRetry({
+    $transaction: async () => {
+      attempts += 1
+      throw error
+    },
+  }, async () => undefined), (caught: unknown) => caught === error)
+  assert.equal(attempts, 1)
+  assert.equal(isRetryablePostgresTransactionError(error), false)
+})
+
+test('serializable classifier safely terminates a two-node cause cycle', () => {
+  const first: { code: string; cause?: unknown } = { code: 'OTHER' }
+  const second: { code: string; cause?: unknown } = { code: 'OTHER' }
+  first.cause = second
+  second.cause = first
+  assert.equal(isRetryablePostgresTransactionError(first), false)
+})
+
+test('serializable runner recognizes retryable code inside a cause cycle and still caps attempts', async () => {
+  const first: { code: string; cause?: unknown } = { code: 'OTHER' }
+  const second: { code: string; cause?: unknown } = { code: 'P2034' }
+  first.cause = second
+  second.cause = first
+  let attempts = 0
+  await assert.rejects(runSerializableTransactionWithRetry({
+    $transaction: async () => {
+      attempts += 1
+      throw first
+    },
+  }, async () => undefined, { sleep: async () => undefined }),
+  (error: unknown) => error instanceof SerializableTransactionRetryExhaustedError
+    && error.lastError === first)
+  assert.equal(attempts, 3)
+})
+
+test('Batch retries a record number P2002 inside a cause cycle without misclassifying machine number P2002', async () => {
+  const recordNode: {
+    code: string
+    meta: { target: string[] }
+    cause?: unknown
+  } = { code: 'P2002', meta: { target: ['record_no'] } }
+  const recordWrapper: { code: string; cause?: unknown } = { code: 'OTHER' }
+  recordWrapper.cause = recordNode
+  recordNode.cause = recordWrapper
+
+  const retryFixture = serviceFixture('valid')
+  let retryAttempts = 0
+  retryFixture.dependencies.db = {
+    $transaction: async (
+      callback: Parameters<typeof retryFixture.runTransaction>[0],
+      options: Parameters<typeof retryFixture.runTransaction>[1],
+    ) => {
+      retryAttempts += 1
+      if (retryAttempts === 1) throw recordWrapper
+      return retryFixture.runTransaction(callback, options)
+    },
+  } as never
+  await createInspectionBatch(retryFixture.input, { userId: 'user-1' }, retryFixture.dependencies)
+  assert.equal(retryAttempts, 2)
+
+  const machineNode: {
+    code: string
+    meta: { target: string[] }
+    cause?: unknown
+  } = { code: 'P2002', meta: { target: ['machine_no'] } }
+  const machineWrapper: { code: string; cause?: unknown } = { code: 'OTHER' }
+  machineWrapper.cause = machineNode
+  machineNode.cause = machineWrapper
+
+  const machineFixture = serviceFixture('valid')
+  let machineAttempts = 0
+  machineFixture.dependencies.db = {
+    $transaction: async () => {
+      machineAttempts += 1
+      throw machineWrapper
+    },
+  } as never
+  await assert.rejects(
+    createInspectionBatch(machineFixture.input, { userId: 'user-1' }, machineFixture.dependencies),
+    (error: unknown) => error === machineWrapper,
+  )
+  assert.equal(machineAttempts, 1)
+})
+
+test('equipment route preserves role, response, and error contracts while delegating mutations', () => {
+  const source = readFileSync(
+    new URL('../src/app/api/equipment/route.ts', import.meta.url),
+    'utf8',
+  )
+  assert.match(source, /requireRole\(\['admin', 'quality_manager', 'engineer'\]\)/)
+  assert.match(source, /const updated = await updateEquipment\(/)
+  assert.match(source, /await deleteEquipment\(/)
+  assert.match(source, /NextResponse\.json\(\{ equipment: updated \}\)/)
+  assert.match(source, /NextResponse\.json\(\{ success: true \}\)/)
+  assert.doesNotMatch(source, /requireOwnershipOrAdmin/)
+})
