@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Prisma } from '@prisma/client'
 import { InspectionDomainError } from '../src/lib/inspection-errors'
+import {
+  lockEquipmentAndAllInstallations,
+  lockEquipmentAndInstallationsForPartRevisions,
+} from '../src/lib/inspection-equipment-lock'
 import { createInspectionBatch } from '../src/lib/inspection-integrity-service'
 import { validBatchRequest } from './helpers/spec-001-e-harness'
 
 type Scenario =
   | 'valid'
+  | 'missing-equipment'
   | 'not-released'
   | 'not-installed'
   | 'wrong-equipment'
@@ -25,6 +31,9 @@ function serviceFixture(
   const rawCalls: unknown[] = []
   const writes = { records: 0, audits: 0 }
   let createdData: Record<string, unknown> | undefined
+  let transactionClient: typeof tx | undefined
+  let recordMutationClient: typeof tx | undefined
+  let auditClient: typeof tx | undefined
 
   const installation = {
     id: 'installation-1',
@@ -39,7 +48,9 @@ function serviceFixture(
   const tx = {
     $queryRaw: async (query: unknown) => {
       rawCalls.push(query)
-      if (rawCalls.length === 1) return [{ id: input.record.equipment_id }]
+      if (rawCalls.length === 1) {
+        return scenario === 'missing-equipment' ? [] : [{ id: input.record.equipment_id }]
+      }
       return scenario === 'not-installed' ? [] : [installation]
     },
     user: {
@@ -68,6 +79,7 @@ function serviceFixture(
     inspection_record: {
       count: async () => 0,
       create: async ({ data }: { data: Record<string, unknown> }) => {
+        recordMutationClient = tx
         writes.records += 1
         createdData = data
         return { id: 'record-1', ...data, data_items: [] }
@@ -85,6 +97,7 @@ function serviceFixture(
   const db = {
     $transaction: async (callback: (client: typeof tx) => Promise<unknown>, options: unknown) => {
       transactionOptions.push(options)
+      transactionClient = tx
       return callback(tx)
     },
   }
@@ -94,17 +107,123 @@ function serviceFixture(
     rawCalls,
     writes,
     get createdData() { return createdData },
+    get transactionClient() { return transactionClient },
+    get recordMutationClient() { return recordMutationClient },
+    get auditClient() { return auditClient },
     transactionOptions,
     runTransaction: db.$transaction,
     dependencies: {
       db: db as never,
-      audit: (async (_params: unknown, client: typeof tx) => client.auditLog.create()) as never,
+      audit: (async (_params: unknown, client: typeof tx) => {
+        auditClient = client
+        return client.auditLog.create()
+      }) as never,
       sleep: async (_milliseconds: number) => undefined,
       random: () => 0,
       now: () => new Date('2026-07-17T12:00:00Z'),
     },
   }
 }
+
+test('shared helper locks equipment before deterministic installation rows with parameters', async () => {
+  const calls: Prisma.Sql[] = []
+  const tx = {
+    $queryRaw: async (query: Prisma.Sql) => {
+      calls.push(query)
+      return calls.length === 1 ? [{ id: 'equipment-1' }] : []
+    },
+  } as unknown as Prisma.TransactionClient
+
+  await lockEquipmentAndInstallationsForPartRevisions(
+    tx,
+    'equipment-1',
+    ['11111111-1111-4111-8111-111111111111'],
+  )
+
+  assert.equal(calls.length, 2)
+  assert.match(calls[0].sql, /FROM "equipment"[\s\S]*WHERE id = \?[\s\S]*FOR UPDATE/)
+  assert.deepEqual(calls[0].values, ['equipment-1'])
+  assert.doesNotMatch(calls[0].sql, /::uuid/)
+  assert.match(calls[1].sql, /equipment_id = \?[\s\S]*part_revision_id IN \(\?::uuid\)/)
+  assert.match(calls[1].sql, /ORDER BY id[\s\S]*FOR UPDATE/)
+  assert.deepEqual(calls[1].values, [
+    'equipment-1',
+    '11111111-1111-4111-8111-111111111111',
+  ])
+})
+
+test('all-installations helper locks every row after the equipment without rewriting results', async () => {
+  const calls: Prisma.Sql[] = []
+  const rows = [{
+    id: '11111111-1111-4111-8111-111111111111',
+    equipment_id: 'equipment-1',
+    part_revision_id: '22222222-2222-4222-8222-222222222222',
+    installed_at: new Date('2026-07-17T10:00:00Z'),
+    removed_at: null,
+  }]
+  const tx = {
+    $queryRaw: async (query: Prisma.Sql) => {
+      calls.push(query)
+      return calls.length === 1 ? [{ id: 'equipment-1' }] : rows
+    },
+  } as unknown as Prisma.TransactionClient
+
+  const result = await lockEquipmentAndAllInstallations(tx, 'equipment-1')
+
+  assert.equal(calls.length, 2)
+  assert.match(calls[0].sql, /FROM "equipment"[\s\S]*WHERE id = \?[\s\S]*FOR UPDATE/)
+  assert.deepEqual(calls[0].values, ['equipment-1'])
+  assert.doesNotMatch(calls[0].sql, /::uuid/)
+  assert.match(calls[1].sql, /WHERE equipment_id = \?[\s\S]*ORDER BY id[\s\S]*FOR UPDATE/)
+  assert.doesNotMatch(calls[1].sql, /part_revision_id\s+IN/)
+  assert.deepEqual(calls[1].values, ['equipment-1'])
+  assert.equal(result.found, true)
+  if (result.found) assert.equal(result.installations, rows)
+})
+
+test('revision helper rejects an empty revision list before executing SQL', async () => {
+  let queryCount = 0
+  const tx = {
+    $queryRaw: async () => {
+      queryCount += 1
+      return []
+    },
+  } as unknown as Prisma.TransactionClient
+
+  await assert.rejects(
+    lockEquipmentAndInstallationsForPartRevisions(
+      tx,
+      'equipment-1',
+      [] as unknown as readonly [string, ...string[]],
+    ),
+    (error: unknown) => error instanceof TypeError
+      && error.message === 'partRevisionIds must contain at least one id',
+  )
+  assert.equal(queryCount, 0)
+})
+
+test('inspection batch imports the shared lock helper without retaining private lock copies', () => {
+  const source = readFileSync(
+    new URL('../src/lib/inspection-integrity-service.ts', import.meta.url),
+    'utf8',
+  )
+  assert.match(source, /lockEquipmentAndInstallationsForPartRevisions/)
+  assert.match(source, /await lockEquipmentAndInstallationsForPartRevisions\(/)
+  assert.doesNotMatch(source, /function lockEquipment\(/)
+  assert.doesNotMatch(source, /function lockInstallations\(/)
+})
+
+test('missing equipment preserves the batch domain error and performs no installation lock', async () => {
+  const fixture = serviceFixture('missing-equipment')
+  await assert.rejects(
+    createInspectionBatch(fixture.input, { userId: 'user-1' }, fixture.dependencies),
+    (error: unknown) => error instanceof InspectionDomainError
+      && error.code === 'RESOURCE_NOT_FOUND',
+  )
+  assert.equal(fixture.rawCalls.length, 1)
+  assert.equal(fixture.writes.records, 0)
+  assert.equal(fixture.writes.audits, 0)
+})
 
 async function expectDomainFailure(scenario: Scenario, code: string) {
   const fixture = serviceFixture(scenario)
@@ -208,6 +327,16 @@ test('service derives identity, part, qualification, and audit inside the transa
   assert.equal(fixture.writes.records, 1)
   assert.equal(fixture.writes.audits, 1)
   assert.equal(fixture.rawCalls.length, 2)
+  const [equipmentLock, installationLock] = fixture.rawCalls as Prisma.Sql[]
+  assert.match(equipmentLock.sql, /FROM "equipment"[\s\S]*FOR UPDATE/)
+  assert.deepEqual(equipmentLock.values, [fixture.input.record.equipment_id])
+  assert.match(installationLock.sql, /part_revision_id IN \(\?::uuid\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE/)
+  assert.deepEqual(installationLock.values, [
+    fixture.input.record.equipment_id,
+    fixture.input.items[0].part_revision_id,
+  ])
+  assert.equal(fixture.recordMutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
   const item = (fixture.createdData?.data_items as {
     createMany: { data: Array<Record<string, unknown>> }
   }).createMany.data[0]

@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { logAudit } from './audit'
+import { lockEquipmentAndInstallationsForPartRevisions } from './inspection-equipment-lock'
 import { InspectionDomainError } from './inspection-errors'
 import {
   parseInspectionTimestamp,
@@ -7,8 +8,6 @@ import {
   type BatchInspectionRequest,
   type ParsedInspectionTimestamp,
 } from './inspection-integrity'
-
-type TransactionClient = Prisma.TransactionClient
 
 type InspectionServiceDatabase = Pick<PrismaClient, '$transaction'>
 
@@ -23,14 +22,6 @@ export type InspectionIntegrityServiceDependencies = {
 export type CreateInspectionBatchContext = {
   userId: string
   request?: Request
-}
-
-type LockedInstallation = {
-  id: string
-  equipment_id: string
-  part_revision_id: string
-  installed_at: Date
-  removed_at: Date | null
 }
 
 type QualificationBounds = {
@@ -132,34 +123,6 @@ function retryDelay(attempt: number, random: () => number) {
   return minimum + Math.floor(random() * (maximum - minimum + 1))
 }
 
-async function lockEquipment(tx: TransactionClient, equipmentId: string) {
-  const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-    SELECT id
-    FROM "equipment"
-    WHERE id = ${equipmentId}
-    FOR UPDATE
-  `)
-  if (rows.length === 0) {
-    throw new InspectionDomainError('RESOURCE_NOT_FOUND', '设备不存在或不可用')
-  }
-}
-
-async function lockInstallations(
-  tx: TransactionClient,
-  equipmentId: string,
-  revisionIds: string[],
-) {
-  const revisionUuidParameters = revisionIds.map((revisionId) => Prisma.sql`${revisionId}::uuid`)
-  return tx.$queryRaw<LockedInstallation[]>(Prisma.sql`
-    SELECT id, equipment_id, part_revision_id, installed_at, removed_at
-    FROM "equipment_part_installation"
-    WHERE equipment_id = ${equipmentId}
-      AND part_revision_id IN (${Prisma.join(revisionUuidParameters)})
-    ORDER BY id
-    FOR UPDATE
-  `)
-}
-
 async function executeTransaction(
   input: BatchInspectionRequest,
   context: CreateInspectionBatchContext,
@@ -168,11 +131,26 @@ async function executeTransaction(
   parsedTimestamp: ParsedInspectionTimestamp,
 ) {
   const revisionIds = [...new Set(input.items.map((item) => item.part_revision_id))]
+  const firstRevisionId = revisionIds[0]
+  if (!firstRevisionId) {
+    throw new InspectionDomainError('EMPTY_BATCH', '请至少填写一项检测数据')
+  }
+  const nonEmptyRevisionIds: readonly [string, ...string[]] = [
+    firstRevisionId,
+    ...revisionIds.slice(1),
+  ]
   const parameterIds = [...new Set(input.items.map((item) => item.param_item_id))]
 
   return dependencies.db.$transaction(async (tx) => {
-    await lockEquipment(tx, input.record.equipment_id)
-    const installations = await lockInstallations(tx, input.record.equipment_id, revisionIds)
+    const lockedState = await lockEquipmentAndInstallationsForPartRevisions(
+      tx,
+      input.record.equipment_id,
+      nonEmptyRevisionIds,
+    )
+    if (!lockedState.found) {
+      throw new InspectionDomainError('RESOURCE_NOT_FOUND', '设备不存在或不可用')
+    }
+    const installations = lockedState.installations
     const transactionTimestamp = parseInspectionTimestamp(input.record.inspection_date, {
       now: authoritativeNow,
     })
