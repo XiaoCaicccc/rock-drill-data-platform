@@ -149,11 +149,12 @@ async function lockInstallations(
   equipmentId: string,
   revisionIds: string[],
 ) {
+  const revisionUuidParameters = revisionIds.map((revisionId) => Prisma.sql`${revisionId}::uuid`)
   return tx.$queryRaw<LockedInstallation[]>(Prisma.sql`
     SELECT id, equipment_id, part_revision_id, installed_at, removed_at
     FROM "equipment_part_installation"
     WHERE equipment_id = ${equipmentId}
-      AND part_revision_id IN (${Prisma.join(revisionIds)})
+      AND part_revision_id IN (${Prisma.join(revisionUuidParameters)})
     ORDER BY id
     FOR UPDATE
   `)

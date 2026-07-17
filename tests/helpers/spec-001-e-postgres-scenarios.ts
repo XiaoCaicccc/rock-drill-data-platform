@@ -225,7 +225,7 @@ async function replacementScenario(seed: Seed, fixture: Spec001EPostgresFixture)
   const blocker = fixture.prisma.$transaction(async (tx) => {
     await tx.$queryRaw(Prisma.sql`
       SELECT id FROM "equipment_part_installation"
-      WHERE id = ${seed.installation.id} FOR UPDATE
+      WHERE id = ${seed.installation.id}::uuid FOR UPDATE
     `)
     installationBlocked.resolve()
     await releaseInstallationBlocker.promise
@@ -245,7 +245,7 @@ async function replacementScenario(seed: Seed, fixture: Spec001EPostgresFixture)
     writerAcquiredEquipment = true
     await tx.$queryRaw(Prisma.sql`
       SELECT id FROM "equipment_part_installation"
-      WHERE id = ${seed.installation.id} FOR UPDATE
+      WHERE id = ${seed.installation.id}::uuid FOR UPDATE
     `)
     await tx.equipment_part_installation.update({
       where: { id: seed.installation.id },
