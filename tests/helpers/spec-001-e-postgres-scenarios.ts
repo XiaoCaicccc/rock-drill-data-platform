@@ -3,6 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { createInspectionBatch } from '../../src/lib/inspection-integrity-service'
 import { InspectionDomainError } from '../../src/lib/inspection-errors'
+import { logAudit } from '../../src/lib/audit'
+import {
+  deleteEquipment,
+  EquipmentMutationError,
+  updateEquipment,
+} from '../../src/lib/equipment-mutation-service'
 import type { BatchInspectionRequest } from '../../src/lib/inspection-integrity'
 import type { Spec001EPostgresFixture } from './spec-001-e-postgres'
 
@@ -20,6 +26,20 @@ function deferred() {
   let resolve!: () => void
   const promise = new Promise<void>((done) => { resolve = done })
   return { promise, resolve }
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, milliseconds = 5_000) {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), milliseconds)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
 }
 
 async function remainsPending(promise: Promise<unknown>, milliseconds = 100) {
@@ -338,12 +358,286 @@ async function recordNumberScenario(seed: Seed, fixture: Spec001EPostgresFixture
   }
 }
 
+const equipmentActor = (seed: Seed) => ({
+  id: seed.user.id,
+  role: 'engineer' as const,
+})
+
+async function equipmentPutAuditRollbackScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const before = await fixture.prisma.equipment.findUniqueOrThrow({
+    where: { id: seed.equipment.id },
+  })
+  await assert.rejects(updateEquipment({
+    equipmentId: seed.equipment.id,
+    data: { status: '停用', remark: 'must roll back' },
+    actor: equipmentActor(seed),
+  }, {
+    db: fixture.prisma,
+    audit: async () => { throw new Error('forced equipment PUT audit failure') },
+  }), /forced equipment PUT audit failure/)
+  const after = await fixture.prisma.equipment.findUniqueOrThrow({
+    where: { id: seed.equipment.id },
+  })
+  const successAudits = await fixture.prisma.auditLog.count({
+    where: {
+      userId: seed.user.id,
+      action: 'UPDATE',
+      entityType: 'equipment',
+      entityId: seed.equipment.id,
+    },
+  })
+  const integrityPreserved = successAudits === 0
+    && JSON.stringify(after) === JSON.stringify(before)
+  return {
+    committedRecords: 0,
+    committedItems: 0,
+    successAudits,
+    integrityPreserved,
+    proof: { equipmentUnchanged: JSON.stringify(after) === JSON.stringify(before) },
+  }
+}
+
+async function equipmentDeleteAuditRollbackScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const suffix = fixture.runId.replace(/[^a-zA-Z0-9]/g, '').slice(-16)
+  const deletable = await fixture.prisma.equipment.create({
+    data: {
+      machine_no: `DEL${suffix}`,
+      model: 'SPEC-001-E DELETE',
+      created_by: seed.user.id,
+    },
+  })
+  try {
+    await assert.rejects(deleteEquipment({
+      equipmentId: deletable.id,
+      actor: equipmentActor(seed),
+    }, {
+      db: fixture.prisma,
+      audit: async () => { throw new Error('forced equipment DELETE audit failure') },
+    }), /forced equipment DELETE audit failure/)
+    const after = await fixture.prisma.equipment.findUnique({ where: { id: deletable.id } })
+    const successAudits = await fixture.prisma.auditLog.count({
+      where: {
+        userId: seed.user.id,
+        action: 'DELETE',
+        entityType: 'equipment',
+        entityId: deletable.id,
+      },
+    })
+    const equipmentPreserved = JSON.stringify(after) === JSON.stringify(deletable)
+    return {
+      committedRecords: 0,
+      committedItems: 0,
+      successAudits,
+      integrityPreserved: equipmentPreserved && successAudits === 0,
+      proof: { equipmentPreserved },
+    }
+  } finally {
+    await fixture.prisma.equipment.deleteMany({ where: { id: deletable.id } })
+  }
+}
+
+async function batchAndEquipmentPutLockScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const batchAtAudit = deferred()
+  const releaseBatch = deferred()
+  const batch = createInspectionBatch(requestFor(seed), { userId: seed.user.id }, {
+    db: fixture.prisma,
+    audit: async (params, tx) => {
+      batchAtAudit.resolve()
+      await withTimeout(releaseBatch.promise, 'release Batch PUT barrier')
+      return logAudit(params, tx)
+    },
+  })
+  let update: Promise<Awaited<ReturnType<typeof updateEquipment>>> | undefined
+  try {
+    await withTimeout(batchAtAudit.promise, 'Batch reaching PUT audit barrier')
+    update = updateEquipment({
+      equipmentId: seed.equipment.id,
+      data: { status: '停用' },
+      actor: equipmentActor(seed),
+    }, { db: fixture.prisma, audit: logAudit })
+    const updateWaitedForBatch = await remainsPending(update)
+    assert.equal(updateWaitedForBatch, true)
+    releaseBatch.resolve()
+    const [record, updated] = await Promise.all([
+      withTimeout(batch, 'Batch completion after PUT barrier'),
+      withTimeout(update, 'Equipment PUT completion after Batch'),
+    ])
+    const persistedRecord = await fixture.prisma.inspection_record.findUnique({
+      where: { id: record.id },
+    })
+    const persistedEquipment = await fixture.prisma.equipment.findUnique({
+      where: { id: seed.equipment.id },
+    })
+    return {
+      ...await counts(seed, fixture),
+      integrityPreserved: persistedRecord !== null && persistedEquipment?.status === updated.status,
+      proof: { updateWaitedForBatch, status: persistedEquipment?.status },
+    }
+  } finally {
+    releaseBatch.resolve()
+    await Promise.allSettled([batch, ...(update ? [update] : [])])
+  }
+}
+
+async function batchAndEquipmentDeleteLockScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const batchAtAudit = deferred()
+  const releaseBatch = deferred()
+  const batch = createInspectionBatch(requestFor(seed), { userId: seed.user.id }, {
+    db: fixture.prisma,
+    audit: async (params, tx) => {
+      batchAtAudit.resolve()
+      await withTimeout(releaseBatch.promise, 'release Batch DELETE barrier')
+      return logAudit(params, tx)
+    },
+  })
+  let deletion: Promise<void> | undefined
+  try {
+    await withTimeout(batchAtAudit.promise, 'Batch reaching DELETE audit barrier')
+    deletion = deleteEquipment({
+      equipmentId: seed.equipment.id,
+      actor: equipmentActor(seed),
+    }, { db: fixture.prisma, audit: logAudit })
+    const deletionOutcome = deletion.then(
+      () => ({ error: undefined }),
+      (error: unknown) => ({ error }),
+    )
+    const deleteWaitedForBatch = await remainsPending(deletionOutcome)
+    assert.equal(deleteWaitedForBatch, true)
+    releaseBatch.resolve()
+    const [record, { error }] = await Promise.all([
+      withTimeout(batch, 'Batch completion after DELETE barrier'),
+      withTimeout(deletionOutcome, 'Equipment DELETE completion after Batch'),
+    ])
+    assert.equal(error instanceof EquipmentMutationError, true)
+    assert.equal((error as EquipmentMutationError).status, 409)
+    assert.equal(
+      (error as EquipmentMutationError).message,
+      '该设备下尚有 1 条装配历史，请先移除相关装配记录',
+    )
+    const [equipment, persistedRecord, deleteSuccessAudits] = await Promise.all([
+      fixture.prisma.equipment.findUnique({ where: { id: seed.equipment.id } }),
+      fixture.prisma.inspection_record.findUnique({ where: { id: record.id } }),
+      fixture.prisma.auditLog.count({
+        where: {
+          userId: seed.user.id,
+          action: 'DELETE',
+          entityType: 'equipment',
+          entityId: seed.equipment.id,
+        },
+      }),
+    ])
+    return {
+      ...await counts(seed, fixture),
+      integrityPreserved: equipment !== null && persistedRecord !== null && deleteSuccessAudits === 0,
+      proof: { deleteWaitedForBatch, deleteSuccessAudits },
+    }
+  } finally {
+    releaseBatch.resolve()
+    await Promise.allSettled([batch, ...(deletion ? [deletion] : [])])
+  }
+}
+
+async function concurrentMachineNumberScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const suffix = fixture.runId.replace(/[^a-zA-Z0-9]/g, '').slice(-14)
+  const targetMachineNo = `RACE${suffix}`
+  const equipment = await Promise.all([
+    fixture.prisma.equipment.create({
+      data: { machine_no: `R1${suffix}`, model: 'SPEC-001-E RACE', created_by: seed.user.id },
+    }),
+    fixture.prisma.equipment.create({
+      data: { machine_no: `R2${suffix}`, model: 'SPEC-001-E RACE', created_by: seed.user.id },
+    }),
+  ])
+  const equipmentIds = equipment.map((item) => item.id)
+  const enteredAudit = deferred()
+  const releaseAudit = deferred()
+  const updateA = updateEquipment({
+    equipmentId: equipment[0].id,
+    data: { machine_no: targetMachineNo },
+    normalizedMachineNo: targetMachineNo,
+    conflictDisplayMachineNo: targetMachineNo,
+    actor: equipmentActor(seed),
+  }, {
+    db: fixture.prisma,
+    audit: async (params, tx) => {
+      enteredAudit.resolve()
+      await withTimeout(releaseAudit.promise, 'release machine number audit barrier')
+      return logAudit(params, tx)
+    },
+  })
+  let updateB: Promise<Awaited<ReturnType<typeof updateEquipment>>> | undefined
+  try {
+    await withTimeout(enteredAudit.promise, 'Equipment A reaching machine number audit barrier')
+    updateB = updateEquipment({
+      equipmentId: equipment[1].id,
+      data: { machine_no: targetMachineNo },
+      normalizedMachineNo: targetMachineNo,
+      conflictDisplayMachineNo: targetMachineNo,
+      actor: equipmentActor(seed),
+    }, { db: fixture.prisma, audit: logAudit })
+    const bWaitedForA = await remainsPending(updateB)
+    assert.equal(bWaitedForA, true)
+    releaseAudit.resolve()
+    const outcomes = await Promise.allSettled([updateA, updateB])
+    const successes = outcomes.filter((outcome) => outcome.status === 'fulfilled')
+    const failures = outcomes.filter((outcome) => outcome.status === 'rejected')
+    assert.equal(successes.length, 1)
+    assert.equal(failures.length, 1)
+    assert.equal(
+      failures[0].reason instanceof EquipmentMutationError
+        && failures[0].reason.status === 409
+        && failures[0].reason.message === `机头编号 "${targetMachineNo}" 已被其他设备使用`,
+      true,
+    )
+    const [targetRows, successAudits] = await Promise.all([
+      fixture.prisma.equipment.count({ where: { machine_no: targetMachineNo } }),
+      fixture.prisma.auditLog.count({
+        where: {
+          userId: seed.user.id,
+          action: 'UPDATE',
+          entityType: 'equipment',
+          entityId: { in: equipmentIds },
+        },
+      }),
+    ])
+    return {
+      committedRecords: 0,
+      committedItems: 0,
+      successAudits,
+      integrityPreserved: targetRows === 1 && successAudits === 1,
+      proof: { successfulRequests: successes.length, targetRows, bWaitedForA },
+    }
+  } finally {
+    releaseAudit.resolve()
+    await Promise.allSettled([updateA, ...(updateB ? [updateB] : [])])
+    await fixture.prisma.auditLog.deleteMany({
+      where: { entityType: 'equipment', entityId: { in: equipmentIds } },
+    })
+    await fixture.prisma.equipment.deleteMany({ where: { id: { in: equipmentIds } } })
+  }
+}
+
 export async function runSpec001EPostgresScenario(
   fixture: Spec001EPostgresFixture,
   scenario: string,
 ): Promise<PostgresScenarioResult> {
   const seed = await seedScenario(fixture)
   try {
+    if (scenario.includes('PUT audit failure')) {
+      return await equipmentPutAuditRollbackScenario(seed, fixture)
+    }
+    if (scenario.includes('DELETE audit failure')) {
+      return await equipmentDeleteAuditRollbackScenario(seed, fixture)
+    }
+    if (scenario.includes('Batch and Equipment PUT')) {
+      return await batchAndEquipmentPutLockScenario(seed, fixture)
+    }
+    if (scenario.includes('Batch and Equipment DELETE')) {
+      return await batchAndEquipmentDeleteLockScenario(seed, fixture)
+    }
+    if (scenario.includes('concurrent equipment machine_no')) {
+      return await concurrentMachineNumberScenario(seed, fixture)
+    }
     if (scenario.includes('installation removal')) return await removalScenario(seed, fixture)
     if (scenario.includes('replacement')) return await replacementScenario(seed, fixture)
     if (scenario.includes('rolls back')) return await rollbackScenario(seed, fixture)

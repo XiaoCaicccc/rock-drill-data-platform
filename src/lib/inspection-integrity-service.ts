@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { logAudit } from './audit'
 import { lockEquipmentAndInstallationsForPartRevisions } from './inspection-equipment-lock'
 import { InspectionDomainError } from './inspection-errors'
@@ -8,8 +8,14 @@ import {
   type BatchInspectionRequest,
   type ParsedInspectionTimestamp,
 } from './inspection-integrity'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionRetryExhaustedError,
+  isRetryablePostgresTransactionError,
+  type InteractiveTransactionDatabase,
+} from './serializable-transaction'
 
-type InspectionServiceDatabase = Pick<PrismaClient, '$transaction'>
+type InspectionServiceDatabase = InteractiveTransactionDatabase
 
 export type InspectionIntegrityServiceDependencies = {
   db: InspectionServiceDatabase
@@ -86,41 +92,30 @@ function recordPrefix(inspectionDate: Date) {
   return `JC-${inspectionDate.toISOString().slice(0, 10).replace(/-/g, '')}-`
 }
 
-function errorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  const candidate = error as {
-    code?: unknown
-    meta?: { code?: unknown }
-    cause?: unknown
+function isRecordNumberCollision(error: unknown): boolean {
+  const visited = new Set<object>()
+  let current = error
+  while (current && typeof current === 'object') {
+    if (visited.has(current)) return false
+    visited.add(current)
+    const candidate = current as {
+      code?: unknown
+      meta?: { code?: unknown; target?: unknown }
+      cause?: unknown
+    }
+    const codes = [candidate.code, candidate.meta?.code]
+    if (codes.includes('P2002')) {
+      const target = candidate.meta?.target
+      if (Array.isArray(target) && target.includes('record_no')) return true
+      if (typeof target === 'string' && target.includes('record_no')) return true
+    }
+    current = candidate.cause
   }
-  if (typeof candidate.code === 'string') return candidate.code
-  if (typeof candidate.meta?.code === 'string') return candidate.meta.code
-  return errorCode(candidate.cause)
-}
-
-function isRecordNumberCollision(error: unknown) {
-  if (errorCode(error) !== 'P2002' || !error || typeof error !== 'object') return false
-  const target = (error as { meta?: { target?: unknown } }).meta?.target
-  if (Array.isArray(target)) return target.includes('record_no')
-  return typeof target === 'string' && target.includes('record_no')
+  return false
 }
 
 function isRetryableTransactionError(error: unknown) {
-  if (!error || typeof error !== 'object') return false
-  const candidate = error as {
-    code?: unknown
-    meta?: { code?: unknown }
-    cause?: unknown
-  }
-  const codes = [candidate.code, candidate.meta?.code]
-  return codes.some((code) => code === '40001' || code === '40P01' || code === 'P2034')
-    || isRecordNumberCollision(error)
-    || isRetryableTransactionError(candidate.cause)
-}
-
-function retryDelay(attempt: number, random: () => number) {
-  const [minimum, maximum] = attempt === 1 ? [25, 50] : [75, 150]
-  return minimum + Math.floor(random() * (maximum - minimum + 1))
+  return isRetryablePostgresTransactionError(error) || isRecordNumberCollision(error)
 }
 
 async function executeTransaction(
@@ -141,7 +136,7 @@ async function executeTransaction(
   ]
   const parameterIds = [...new Set(input.items.map((item) => item.param_item_id))]
 
-  return dependencies.db.$transaction(async (tx) => {
+  return runSerializableTransactionWithRetry(dependencies.db, async (tx) => {
     const lockedState = await lockEquipmentAndInstallationsForPartRevisions(
       tx,
       input.record.equipment_id,
@@ -267,7 +262,11 @@ async function executeTransaction(
     }, tx)
 
     return record
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  }, {
+    sleep: dependencies.sleep,
+    random: dependencies.random,
+    isRetryable: isRetryableTransactionError,
+  })
 }
 
 export async function createInspectionBatch(
@@ -286,26 +285,18 @@ export async function createInspectionBatch(
     now: authoritativeNow,
   })
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await executeTransaction(
-        input,
-        context,
-        dependencies,
-        authoritativeNow,
-        parsedTimestamp,
-      )
-    } catch (error) {
-      if (!isRetryableTransactionError(error)) throw error
-      if (attempt === 2) {
-        throw new InspectionDomainError(
-          'CONCURRENT_MODIFICATION',
-          '并发修改冲突，请重试',
-        )
-      }
-      await dependencies.sleep(retryDelay(attempt + 1, dependencies.random))
+  try {
+    return await executeTransaction(
+      input,
+      context,
+      dependencies,
+      authoritativeNow,
+      parsedTimestamp,
+    )
+  } catch (error) {
+    if (error instanceof SerializableTransactionRetryExhaustedError) {
+      throw new InspectionDomainError('CONCURRENT_MODIFICATION', '并发修改冲突，请重试')
     }
+    throw error
   }
-
-  throw new InspectionDomainError('CONCURRENT_MODIFICATION', '并发修改冲突，请重试')
 }

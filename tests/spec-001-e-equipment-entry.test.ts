@@ -9,6 +9,11 @@ const require = createRequire(import.meta.url)
 let identity: Identity = 'anonymous'
 let findManyCalls = 0
 let lastQuery: Record<string, unknown> | undefined
+let equipmentMutationOutcome:
+  | { kind: 'success'; equipment?: Record<string, unknown> }
+  | { kind: 'domain'; status: 403 | 404 | 409; message: string }
+  | { kind: 'unknown' } = { kind: 'success' }
+let lastEquipmentMutationInput: Record<string, unknown> | undefined
 
 function replaceModule(modulePath: string, exports: object) {
   const filename = require.resolve(modulePath)
@@ -23,6 +28,31 @@ function replaceModule(modulePath: string, exports: object) {
 }
 
 replaceModule('../src/lib/permissions.ts', {
+  requireAuth: async () => {
+    if (identity === 'anonymous') {
+      return new Response(JSON.stringify({ error: '未登录' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return { user: { id: `user-${identity}`, role: identity } }
+  },
+  requireRole: async (allowedRoles: Identity[]) => {
+    if (identity === 'anonymous') {
+      return new Response(JSON.stringify({ error: '未登录' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (!allowedRoles.includes(identity)) {
+      return new Response(JSON.stringify({ error: '权限不足' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return { user: { id: `user-${identity}`, role: identity } }
+  },
+  applyDataScope: (_access: unknown, where: unknown) => where,
   requireDataScopeResource: async () => {
     if (identity === 'anonymous') return new Response(null, { status: 401 })
     if (identity === 'engineer' || identity === 'viewer') {
@@ -33,6 +63,33 @@ replaceModule('../src/lib/permissions.ts', {
       scope: identity === 'admin' ? 'all' : 'quality',
     }
   },
+})
+
+const actualEquipmentMutationService = require('../src/lib/equipment-mutation-service.ts') as {
+  EquipmentMutationError: new (status: 403 | 404 | 409, message: string) => Error
+}
+
+async function equipmentMutationStub(input: Record<string, unknown>) {
+  lastEquipmentMutationInput = input
+  if (equipmentMutationOutcome.kind === 'domain') {
+    throw new actualEquipmentMutationService.EquipmentMutationError(
+      equipmentMutationOutcome.status,
+      equipmentMutationOutcome.message,
+    )
+  }
+  if (equipmentMutationOutcome.kind === 'unknown') throw new Error('unexpected failure')
+  return equipmentMutationOutcome.equipment ?? {
+    id: 'equipment-1',
+    machine_no: 'EQ-001',
+    model: 'RD-1',
+    status: '在用',
+  }
+}
+
+replaceModule('../src/lib/equipment-mutation-service.ts', {
+  ...actualEquipmentMutationService,
+  updateEquipment: equipmentMutationStub,
+  deleteEquipment: equipmentMutationStub,
 })
 
 replaceModule('../src/lib/db.ts', {
@@ -49,6 +106,10 @@ replaceModule('../src/lib/db.ts', {
 
 const { GET } = require('../src/app/api/inspections/entry/equipment/route.ts') as {
   GET: (request: NextRequest) => Promise<Response>
+}
+const equipmentRoute = require('../src/app/api/equipment/route.ts') as {
+  PUT: (request: NextRequest) => Promise<Response>
+  DELETE: (request: NextRequest) => Promise<Response>
 }
 
 function request(inspectionDate = '2020-07-17T11:00:00Z') {
@@ -108,4 +169,102 @@ test('equipment discovery pushes time eligibility and minimal selection into Pri
   assert.deepEqual(await response.json(), {
     equipment: [{ id: 'equipment-1', machine_no: 'EQ-001', model: 'RD-1', status: '在用' }],
   })
+})
+
+function putRequest(body: Record<string, unknown>) {
+  return new NextRequest('http://localhost/api/equipment', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+function deleteRequest(id = 'equipment-1') {
+  return new NextRequest(`http://localhost/api/equipment?id=${id}`, { method: 'DELETE' })
+}
+
+test('equipment PUT production route preserves authentication, errors, and success contract', async () => {
+  identity = 'anonymous'
+  let response = await equipmentRoute.PUT(putRequest({ id: 'equipment-1', status: '停用' }))
+  assert.equal(response.status, 401)
+  assert.deepEqual(await response.json(), { error: '未登录' })
+
+  identity = 'viewer'
+  response = await equipmentRoute.PUT(putRequest({ id: 'equipment-1', status: '停用' }))
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { error: '权限不足' })
+
+  identity = 'engineer'
+  for (const domain of [
+    { status: 404 as const, message: '设备不存在' },
+    { status: 403 as const, message: '无权操作其他用户创建的资源' },
+    { status: 409 as const, message: '机头编号 "EQ-002" 已被其他设备使用' },
+  ]) {
+    equipmentMutationOutcome = { kind: 'domain', ...domain }
+    response = await equipmentRoute.PUT(putRequest({ id: 'equipment-1', machine_no: 'EQ-002' }))
+    assert.equal(response.status, domain.status)
+    assert.deepEqual(await response.json(), { error: domain.message })
+  }
+
+  equipmentMutationOutcome = {
+    kind: 'domain',
+    status: 409,
+    message: '机头编号 " EQ-002 " 已被其他设备使用',
+  }
+  response = await equipmentRoute.PUT(putRequest({
+    id: 'equipment-1',
+    machine_no: ' EQ-002 ',
+  }))
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: '机头编号 " EQ-002 " 已被其他设备使用',
+  })
+  assert.equal(lastEquipmentMutationInput?.normalizedMachineNo, 'EQ-002')
+  assert.equal(lastEquipmentMutationInput?.conflictDisplayMachineNo, ' EQ-002 ')
+  assert.deepEqual(lastEquipmentMutationInput?.data, { machine_no: 'EQ-002' })
+
+  const equipment = { id: 'equipment-1', machine_no: 'EQ-001', status: '停用' }
+  equipmentMutationOutcome = { kind: 'success', equipment }
+  response = await equipmentRoute.PUT(putRequest({ id: 'equipment-1', status: '停用' }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { equipment })
+
+  equipmentMutationOutcome = { kind: 'unknown' }
+  response = await equipmentRoute.PUT(putRequest({ id: 'equipment-1', status: '停用' }))
+  assert.equal(response.status, 500)
+  assert.deepEqual(await response.json(), { error: '更新设备失败' })
+})
+
+test('equipment DELETE production route preserves authentication, errors, and success contract', async () => {
+  identity = 'anonymous'
+  let response = await equipmentRoute.DELETE(deleteRequest())
+  assert.equal(response.status, 401)
+  assert.deepEqual(await response.json(), { error: '未登录' })
+
+  identity = 'viewer'
+  response = await equipmentRoute.DELETE(deleteRequest())
+  assert.equal(response.status, 403)
+  assert.deepEqual(await response.json(), { error: '权限不足' })
+
+  identity = 'engineer'
+  for (const domain of [
+    { status: 404 as const, message: '设备不存在' },
+    { status: 403 as const, message: '无权操作其他用户创建的资源' },
+    { status: 409 as const, message: '该设备下尚有 2 条装配历史，请先移除相关装配记录' },
+  ]) {
+    equipmentMutationOutcome = { kind: 'domain', ...domain }
+    response = await equipmentRoute.DELETE(deleteRequest())
+    assert.equal(response.status, domain.status)
+    assert.deepEqual(await response.json(), { error: domain.message })
+  }
+
+  equipmentMutationOutcome = { kind: 'success' }
+  response = await equipmentRoute.DELETE(deleteRequest())
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { success: true })
+
+  equipmentMutationOutcome = { kind: 'unknown' }
+  response = await equipmentRoute.DELETE(deleteRequest())
+  assert.equal(response.status, 500)
+  assert.deepEqual(await response.json(), { error: '删除设备失败' })
 })
