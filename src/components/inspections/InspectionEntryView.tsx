@@ -35,6 +35,7 @@ import {
   type PartRow,
   type ParamColumn,
 } from './MatrixTable'
+import { getBatchErrorMessageFromResponse } from './batch-error'
 
 // ============================
 // Types
@@ -45,6 +46,59 @@ interface EquipmentOption {
   machine_no: string
   model: string
   status: string
+}
+
+interface InspectionPart {
+  installation_id: string
+  part_revision_id: string
+  part_id: string
+  part_code: string
+  part_name: string
+  category_id: string
+  category_code: string
+  category_name: string
+  revision_no: string
+  installed_at: string
+  removed_at: string | null
+}
+
+interface InspectionParameter {
+  id: string
+  param_name: string
+  param_code: string
+  unit: string | null
+  data_type: string
+  standard_min: number | null
+  standard_max: number | null
+  optimal_min: number | null
+  optimal_max: number | null
+  sort_order: number
+}
+
+interface BatchInspectionRequest {
+  record: {
+    equipment_id: string
+    inspection_date: string
+    batch_no?: string
+    remark?: string
+  }
+  items: Array<{
+    part_revision_id: string
+    param_item_id: string
+    value_number: number | null
+    value_text: string | null
+  }>
+}
+
+function inspectionDateTimestamp(date: string) {
+  const [year, month, day] = date.split('-').map(Number)
+  const localDate = new Date(year, month - 1, day)
+  const offsetMinutes = -localDate.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absoluteOffset = Math.abs(offsetMinutes)
+  const hours = String(Math.floor(absoluteOffset / 60)).padStart(2, '0')
+  const minutes = String(absoluteOffset % 60).padStart(2, '0')
+  return `${date}T00:00:00${sign}${hours}:${minutes}`
 }
 
 // ============================
@@ -88,8 +142,12 @@ export default function InspectionEntryView() {
     ;(async () => {
       try {
         setLoadingEquipment(true)
-        const res = await fetch('/api/equipment?status=在用')
+        const timestamp = inspectionDateTimestamp(inspectionDate)
+        const res = await fetch(
+          `/api/inspections/entry/equipment?inspection_date=${encodeURIComponent(timestamp)}`,
+        )
         const data = await res.json()
+        if (!res.ok) throw new Error(data.error || '获取设备列表失败')
         if (!cancelled) {
           setEquipmentOptions(data.equipment || [])
         }
@@ -102,7 +160,7 @@ export default function InspectionEntryView() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [inspectionDate])
 
   // ============================
   // Load parts + templates when equipment changes
@@ -120,54 +178,49 @@ export default function InspectionEntryView() {
     ;(async () => {
       try {
         setLoadingData(true)
-        const [partsRes, tplRes] = await Promise.all([
-          fetch(`/api/equipment/${selectedEquipmentId}/parts`),
-          fetch('/api/parameter-templates'),
-        ])
+        const timestamp = inspectionDateTimestamp(inspectionDate)
+        const partsRes = await fetch(
+          `/api/inspections/entry/equipment/${encodeURIComponent(selectedEquipmentId)}/parts?inspection_date=${encodeURIComponent(timestamp)}`,
+        )
         const partsData = await partsRes.json()
-        const tplData = await tplRes.json()
+        if (!partsRes.ok) throw new Error(partsData.error || '获取零件列表失败')
 
         if (cancelled) return
 
-        // Map API parts to PartRow
-        const loadedParts: PartRow[] = (partsData.parts || []).map(
-          (p: Record<string, unknown>) => ({
-            id: p.id as string,
-            part_revision_id: p.part_revision_id as string,
-            revision_no: (p.revision_no as string) || '未知版本',
-            drawing_no: (p.drawing_no as string) || null,
-            code: p.code as string,
-            name: p.name as string,
-            category_code: (p.category_code as string) || '',
-            category_name: (p.category_name as string) || '',
+        const discoveredParts = (partsData.parts || []) as InspectionPart[]
+        const loadedParts: PartRow[] = discoveredParts.map((part) => ({
+          id: part.part_revision_id,
+          part_revision_id: part.part_revision_id,
+          revision_no: part.revision_no || '未知版本',
+          drawing_no: null,
+          code: part.part_code,
+          name: part.part_name,
+          category_code: part.category_code,
+          category_name: part.category_name,
+        }))
+
+        const categories = Array.from(
+          new Map(
+            discoveredParts.map((part) => [
+              part.category_id,
+              { id: part.category_id, code: part.category_code },
+            ]),
+          ).values(),
+        )
+        const parameterResponses = await Promise.all(
+          categories.map(async (category) => {
+            const response = await fetch(
+              `/api/inspections/entry/parameters?category_id=${encodeURIComponent(category.id)}`,
+            )
+            const data = await response.json()
+            if (!response.ok) throw new Error(data.error || '获取参数列表失败')
+            return { category, items: data as InspectionParameter[] }
           }),
         )
 
-        // Unique category codes from parts
-        const catCodes = [
-          ...new Set(loadedParts.map((p) => p.category_code)),
-        ]
-
-        // All templates, filtered by category_code
-        const templates = (tplData.templates || []) as Array<{
-          category_code: string
-          items: Array<{
-            id: string
-            param_name: string
-            param_code: string
-            unit: string | null
-            data_type: string
-            standard_min: number | null
-            standard_max: number | null
-            optimal_min: number | null
-            optimal_max: number | null
-          }>
-        }>
-
         const columns: ParamColumn[] = []
-        for (const tpl of templates) {
-          if (!catCodes.includes(tpl.category_code)) continue
-          for (const item of tpl.items) {
+        for (const { category, items } of parameterResponses) {
+          for (const item of items) {
             columns.push({
               id: item.id,
               param_name: item.param_name,
@@ -178,7 +231,7 @@ export default function InspectionEntryView() {
               standard_max: item.standard_max,
               optimal_min: item.optimal_min,
               optimal_max: item.optimal_max,
-              category_code: tpl.category_code,
+              category_code: category.code,
             })
           }
         }
@@ -196,7 +249,7 @@ export default function InspectionEntryView() {
     return () => {
       cancelled = true
     }
-  }, [selectedEquipmentId])
+  }, [selectedEquipmentId, inspectionDate])
 
   // ============================
   // Cell change handler
@@ -327,26 +380,30 @@ export default function InspectionEntryView() {
         })
       }
 
+      const trimmedBatchNo = batchNo.trim()
+      const trimmedRemark = remark.trim()
+      const payload: BatchInspectionRequest = {
+        record: {
+          equipment_id: selectedEquipmentId,
+          inspection_date: inspectionDateTimestamp(inspectionDate),
+          ...(trimmedBatchNo ? { batch_no: trimmedBatchNo } : {}),
+          ...(trimmedRemark ? { remark: trimmedRemark } : {}),
+        },
+        items,
+      }
+
       const res = await fetch('/api/inspections/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          record: {
-            equipment_id: selectedEquipmentId,
-            inspector: inspector.trim(),
-            batch_no: batchNo.trim() || null,
-            inspection_date: inspectionDate,
-            remark: remark.trim() || null,
-          },
-          items,
-        }),
+        body: JSON.stringify(payload),
       })
 
-      const data = await res.json()
       if (!res.ok) {
-        toast.error(data.error || '提交失败')
+        toast.error(await getBatchErrorMessageFromResponse(res))
         return
       }
+
+      const data = await res.json()
 
       toast.success(data.message || '提交成功')
       setCellValues({})
