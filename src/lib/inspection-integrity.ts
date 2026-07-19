@@ -44,17 +44,14 @@ function daysInMonth(year: number, month: number) {
   return [4, 6, 9, 11].includes(month) ? 30 : 31
 }
 
-/** Strict SPEC-001-E 6.5 timestamp parser. */
-export function parseInspectionTimestamp(
-  value: unknown,
-  options: { now: Date },
-): ParsedInspectionTimestamp {
+/** Strict RFC3339 parser shared by inspection and installation mutations. */
+export function parseStrictRfc3339Timestamp(value: unknown): ParsedInspectionTimestamp {
   if (typeof value !== 'string' || value.trim() !== value) {
-    invalidRequest('检测时间必须是带时区的 RFC 3339 date-time')
+    throw new Error('检测时间必须是带时区的 RFC 3339 date-time')
   }
 
   const match = RFC3339_DATE_TIME.exec(value)
-  if (!match) invalidRequest('检测时间必须是带时区的 RFC 3339 date-time')
+  if (!match) throw new Error('检测时间必须是带时区的 RFC 3339 date-time')
 
   const year = Number(match[1])
   const month = Number(match[2])
@@ -75,7 +72,7 @@ export function parseInspectionTimestamp(
     || offsetHour > 23
     || offsetMinute > 59
   ) {
-    invalidRequest('检测时间包含无效的日期、时间或时区偏移')
+    throw new Error('检测时间包含无效的日期、时间或时区偏移')
   }
 
   const local = new Date(0)
@@ -85,11 +82,25 @@ export function parseInspectionTimestamp(
   const offsetMilliseconds = offsetSign * (offsetHour * 60 + offsetMinute) * 60_000
   const instant = new Date(local.getTime() - offsetMilliseconds)
 
-  if (!Number.isFinite(instant.getTime())) invalidRequest('检测时间超出支持范围')
-  if (!Number.isFinite(options.now?.getTime())) invalidRequest('服务端时间无效')
-  if (instant.getTime() > options.now.getTime()) invalidRequest('检测时间不能晚于当前时间')
-
+  if (!Number.isFinite(instant.getTime())) throw new Error('检测时间超出支持范围')
   return { date: instant, normalized: instant.toISOString() }
+}
+
+/** Strict SPEC-001-E 6.5 timestamp parser. */
+export function parseInspectionTimestamp(
+  value: unknown,
+  options: { now: Date },
+): ParsedInspectionTimestamp {
+  let parsed: ParsedInspectionTimestamp
+  try {
+    parsed = parseStrictRfc3339Timestamp(value)
+  } catch (error) {
+    invalidRequest(error instanceof Error ? error.message : '检测时间必须是带时区的 RFC 3339 date-time')
+  }
+  if (!Number.isFinite(options.now?.getTime())) invalidRequest('服务端时间无效')
+  if (parsed.date.getTime() > options.now.getTime()) invalidRequest('检测时间不能晚于当前时间')
+
+  return parsed
 }
 
 const TOP_LEVEL_FIELDS = new Set(['record', 'items'])

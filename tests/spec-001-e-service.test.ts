@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Prisma } from '@prisma/client'
 import { InspectionDomainError } from '../src/lib/inspection-errors'
+import { parseInspectionTimestamp, parseStrictRfc3339Timestamp } from '../src/lib/inspection-integrity'
 import {
   deleteEquipment,
   EquipmentMutationError,
@@ -14,12 +15,18 @@ import {
 } from '../src/lib/inspection-equipment-lock'
 import { createInspectionBatch } from '../src/lib/inspection-integrity-service'
 import {
+  createInstallation,
+  InstallationMutationError,
+  removeInstallation,
+} from '../src/lib/installation-mutation-service'
+import {
   isRetryablePostgresTransactionError,
   runSerializableTransactionWithRetry,
   SerializableTransactionRetryExhaustedError,
   type InteractiveTransactionDatabase,
 } from '../src/lib/serializable-transaction'
 import { validBatchRequest } from './helpers/spec-001-e-harness'
+import { runProtectedScenarioLifecycle } from './helpers/spec-001-e-postgres-scenarios'
 
 type Scenario =
   | 'valid'
@@ -190,6 +197,567 @@ test('all-installations helper locks every row after the equipment without rewri
   assert.deepEqual(calls[1].values, ['equipment-1'])
   assert.equal(result.found, true)
   if (result.found) assert.equal(result.installations, rows)
+})
+
+test('PostgreSQL scenario lifecycle cleans up even when seeding fails', async () => {
+  const seedError = new Error('seed failed')
+  let cleanupCalls = 0
+  await assert.rejects(runProtectedScenarioLifecycle({
+    seed: async () => { throw seedError },
+    execute: async () => 'unreachable',
+    cleanup: async () => { cleanupCalls += 1 },
+  }), (error) => error === seedError)
+  assert.equal(cleanupCalls, 1)
+})
+
+test('PostgreSQL scenario lifecycle preserves the primary scenario error', async () => {
+  const scenarioError = new Error('scenario failed')
+  await assert.rejects(runProtectedScenarioLifecycle({
+    seed: async () => 'seed',
+    execute: async () => { throw scenarioError },
+    cleanup: async () => undefined,
+  }), (error) => error === scenarioError)
+})
+
+test('PostgreSQL scenario lifecycle reports scenario and cleanup errors together', async () => {
+  const scenarioError = new Error('scenario failed')
+  const cleanupError = new Error('cleanup failed')
+  await assert.rejects(runProtectedScenarioLifecycle({
+    seed: async () => 'seed',
+    execute: async () => { throw scenarioError },
+    cleanup: async () => { throw cleanupError },
+  }), (error) => (
+    error instanceof AggregateError
+    && error.errors[0] === scenarioError
+    && error.errors[1] === cleanupError
+  ))
+})
+
+test('PostgreSQL scenario lifecycle releases barriers and settles writers before cleanup', async () => {
+  const events: string[] = []
+  await assert.rejects(runProtectedScenarioLifecycle({
+    seed: async () => 'seed',
+    execute: async () => {
+      try {
+        throw new Error('assertion failed')
+      } finally {
+        events.push('release')
+        await Promise.allSettled([Promise.resolve().then(() => events.push('settled'))])
+      }
+    },
+    cleanup: async () => { events.push('cleanup') },
+  }), /assertion failed/)
+  assert.deepEqual(events, ['release', 'settled', 'cleanup'])
+})
+
+function installationMutationFixture(options: {
+  removed?: boolean
+  auditFailure?: boolean
+  createdBy?: string | null
+  oldInstallations?: Array<Record<string, unknown>>
+  createFailure?: boolean
+  updateFailure?: boolean
+  missingEquipment?: boolean
+  revisions?: Array<{ id: string; part_id: string; lifecycle_state: string }>
+} = {}) {
+  const events: string[] = []
+  const oldInstallation = {
+    id: 'installation-old',
+    equipment_id: 'equipment-1',
+    part_revision_id: 'revision-old',
+    installed_at: new Date('2026-07-17T10:00:00Z'),
+    removed_at: options.removed ? new Date('2026-07-17T11:00:00Z') : null,
+    status: options.removed ? 'removed' : 'active',
+    created_by: 'user-1',
+    created_at: new Date('2026-07-17T10:00:01Z'),
+    remark: 'existing installation',
+  }
+  const oldInstallations = (options.oldInstallations ?? [oldInstallation]) as Array<typeof oldInstallation>
+  const auditParams: Array<Record<string, unknown>> = []
+  const updateInputs: Array<{ where: { id: string }; data: Record<string, unknown> }> = []
+  const createInputs: Array<{ data: Record<string, unknown> }> = []
+  const auditClients: Array<typeof tx> = []
+  let createInput: { data: Record<string, unknown> } | undefined
+  let transactionClient: typeof tx | undefined
+  let mutationClient: typeof tx | undefined
+  let auditClient: typeof tx | undefined
+  const tx = {
+    $queryRaw: async () => {
+      events.push(events.length === 0 ? 'equipment-lock' : 'installation-lock')
+      return events.length === 1
+        ? (options.missingEquipment ? [] : [{ id: 'equipment-1' }])
+        : oldInstallations
+    },
+    equipment: {
+      findUnique: async () => {
+        events.push('equipment-reread')
+        return { id: 'equipment-1', created_by: options.createdBy === undefined ? 'user-1' : options.createdBy }
+      },
+    },
+    equipment_part_installation: {
+      findMany: async () => {
+        events.push('installation-reread')
+        return oldInstallations
+      },
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        events.push(`update:${where.id}`)
+        updateInputs.push({ where, data })
+        mutationClient = tx
+        if (options.updateFailure) throw new Error('installation update failed')
+        const row = oldInstallations.find((candidate) => candidate.id === where.id) ?? oldInstallation
+        return { ...row, ...data }
+      },
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        events.push('create')
+        createInput = { data }
+        createInputs.push({ data })
+        mutationClient = tx
+        if (options.createFailure) throw new Error('installation create failed')
+        return {
+          id: 'installation-new',
+          ...data,
+          created_at: new Date('2026-07-17T11:00:01Z'),
+        }
+      },
+    },
+    part_revision: {
+      findMany: async () => {
+        events.push('revision-reread')
+        return options.revisions ?? [
+          { id: 'revision-old', part_id: 'part-1', lifecycle_state: 'released' },
+          { id: 'revision-new', part_id: 'part-1', lifecycle_state: 'released' },
+        ]
+      },
+    },
+    auditLog: { create: async () => ({ id: 'audit-1' }) },
+  }
+  const dependencies = {
+    db: {
+      $transaction: async (callback: (client: typeof tx) => Promise<unknown>, _options: unknown) => {
+        transactionClient = tx
+        return callback(tx)
+      },
+    } as never,
+    audit: (async (params: Record<string, unknown>, client: typeof tx) => {
+      events.push(`audit:${params.action}:${params.entityId}`)
+      auditParams.push(params)
+      auditClient = client
+      auditClients.push(client)
+      if (options.auditFailure) throw new Error('installation audit failed')
+      return client.auditLog.create()
+    }) as never,
+    sleep: async () => undefined,
+    random: () => 0,
+  }
+  return {
+    oldInstallation,
+    oldInstallations,
+    events,
+    auditParams,
+    auditClients,
+    updateInputs,
+    createInputs,
+    get createInput() { return createInput },
+    dependencies,
+    get transactionClient() { return transactionClient },
+    get mutationClient() { return mutationClient },
+    get auditClient() { return auditClient },
+  }
+}
+
+test('installation create locks, rereads, replaces, and audits with the same transaction client', async () => {
+  const fixture = installationMutationFixture()
+  const installation = await createInstallation({
+    equipmentId: 'equipment-1',
+    partRevisionId: 'revision-new',
+    installedAt: new Date('2026-07-17T11:00:00Z'),
+    remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+  assert.equal(installation.id, 'installation-new')
+  assert.deepEqual(fixture.events, [
+    'equipment-lock', 'installation-lock', 'equipment-reread', 'installation-reread',
+    'revision-reread', 'update:installation-old', 'audit:UPDATE:installation-old',
+    'create', 'audit:CREATE:installation-new',
+  ])
+  assert.equal(fixture.mutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
+})
+
+test('installation remove is idempotent for an already removed locked row', async () => {
+  const fixture = installationMutationFixture({ removed: true })
+  const installation = await removeInstallation({
+    equipmentId: 'equipment-1',
+    installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T12:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+  assert.equal(installation.removed_at?.toISOString(), '2026-07-17T11:00:00.000Z')
+  assert.equal(fixture.events.includes('update:installation-old'), false)
+  assert.equal(fixture.events.some((event) => event.startsWith('audit:')), false)
+})
+
+test('installation mutation audit failure rejects the transaction', async () => {
+  const fixture = installationMutationFixture({ auditFailure: true })
+  await assert.rejects(
+    createInstallation({
+      equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+      installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies),
+    /installation audit failed/,
+  )
+  assert.equal(fixture.mutationClient, fixture.transactionClient)
+  assert.equal(fixture.auditClient, fixture.transactionClient)
+
+  const createAuditFixture = installationMutationFixture({ oldInstallations: [], auditFailure: true })
+  await assert.rejects(createInstallation({
+    equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+    installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, createAuditFixture.dependencies), /installation audit failed/)
+
+  const removeAuditFixture = installationMutationFixture({ auditFailure: true })
+  await assert.rejects(removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T11:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, removeAuditFixture.dependencies), /installation audit failed/)
+})
+
+test('installation replacement uses stable ID order, exact mutation fields, and ordered audits', async () => {
+  const installedAt = new Date('2026-07-17T11:00:00Z')
+  const base = {
+    equipment_id: 'equipment-1',
+    part_revision_id: 'revision-old',
+    installed_at: new Date('2026-07-17T10:00:00Z'),
+    removed_at: null,
+    status: 'active',
+    created_by: 'user-1',
+    created_at: new Date('2026-07-17T10:00:01Z'),
+    remark: null,
+  }
+  const fixture = installationMutationFixture({
+    oldInstallations: [
+      { id: 'installation-z', ...base },
+      { id: 'installation-a', ...base },
+    ],
+  })
+  await createInstallation({
+    equipmentId: 'equipment-1',
+    partRevisionId: 'revision-new',
+    installedAt,
+    remark: 'replacement',
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+
+  assert.deepEqual(fixture.updateInputs, [
+    { where: { id: 'installation-a' }, data: { status: 'removed', removed_at: installedAt } },
+    { where: { id: 'installation-z' }, data: { status: 'removed', removed_at: installedAt } },
+  ])
+  assert.deepEqual(
+    fixture.events,
+    [
+      'equipment-lock', 'installation-lock', 'equipment-reread', 'installation-reread',
+      'revision-reread',
+      'update:installation-a', 'audit:UPDATE:installation-a',
+      'update:installation-z', 'audit:UPDATE:installation-z',
+      'create', 'audit:CREATE:installation-new',
+    ],
+  )
+  assert.deepEqual(fixture.auditParams, [
+    {
+      userId: 'user-1',
+      action: 'UPDATE',
+      entityType: 'equipment_part_installation',
+      entityId: 'installation-a',
+      before: { status: 'active', removed_at: null },
+      after: { status: 'removed', removed_at: installedAt },
+      request: undefined,
+    },
+    {
+      userId: 'user-1',
+      action: 'UPDATE',
+      entityType: 'equipment_part_installation',
+      entityId: 'installation-z',
+      before: { status: 'active', removed_at: null },
+      after: { status: 'removed', removed_at: installedAt },
+      request: undefined,
+    },
+    {
+      userId: 'user-1',
+      action: 'CREATE',
+      entityType: 'equipment_part_installation',
+      entityId: 'installation-new',
+      after: {
+        equipment_id: 'equipment-1',
+        part_revision_id: 'revision-new',
+        installed_at: installedAt,
+        status: 'active',
+      },
+      request: undefined,
+    },
+  ])
+  assert.deepEqual(fixture.auditClients, [
+    fixture.transactionClient,
+    fixture.transactionClient,
+    fixture.transactionClient,
+  ])
+  assert.deepEqual(fixture.createInput?.data, {
+    equipment_id: 'equipment-1',
+    part_revision_id: 'revision-new',
+    installed_at: installedAt,
+    status: 'active',
+    removed_at: null,
+    created_by: 'user-1',
+    remark: 'replacement',
+  })
+})
+
+test('installation remove returns the same complete row shape for active and idempotent paths', async () => {
+  const removedFixture = installationMutationFixture({ removed: true })
+  const noOp = await removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T12:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, removedFixture.dependencies)
+  assert.deepEqual(noOp, removedFixture.oldInstallation)
+
+  const activeFixture = installationMutationFixture()
+  const removedAt = new Date('2026-07-17T12:00:00Z')
+  const updated = await removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old', removedAt,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, activeFixture.dependencies)
+  assert.deepEqual(Object.keys(updated).sort(), Object.keys(noOp).sort())
+  assert.deepEqual(activeFixture.updateInputs, [{
+    where: { id: 'installation-old' },
+    data: { status: 'removed', removed_at: removedAt },
+  }])
+  assert.deepEqual(activeFixture.auditParams[0], {
+    userId: 'user-1',
+    action: 'UPDATE',
+    entityType: 'equipment_part_installation',
+    entityId: 'installation-old',
+    before: { status: 'active', removed_at: null },
+    after: { status: 'removed', removed_at: removedAt },
+    request: undefined,
+  })
+
+  const wrongEquipmentFixture = installationMutationFixture({
+    oldInstallations: [{
+      ...activeFixture.oldInstallation,
+      equipment_id: 'equipment-2',
+    }],
+  })
+  await assert.rejects(removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old', removedAt,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, wrongEquipmentFixture.dependencies), (error: unknown) => error instanceof InstallationMutationError
+    && error.status === 404)
+})
+
+test('installation ownership permits admin, quality manager, and owner only', async () => {
+  for (const actor of [
+    { id: 'admin-x', role: 'admin' as const },
+    { id: 'quality-x', role: 'quality_manager' as const },
+    { id: 'user-1', role: 'engineer' as const },
+  ]) {
+    const fixture = installationMutationFixture({ createdBy: 'user-1' })
+    await createInstallation({
+      equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+      installedAt: new Date('2026-07-17T11:00:00Z'), remark: null, actor,
+    }, fixture.dependencies)
+  }
+  for (const createdBy of ['other-user', null]) {
+    const fixture = installationMutationFixture({ createdBy })
+    await assert.rejects(createInstallation({
+      equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+      installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies), (error: unknown) => error instanceof InstallationMutationError
+      && error.status === 403)
+  }
+})
+
+test('installation transaction rereads missing equipment, revision lifecycle, and part identity', async () => {
+  const cases = [
+    {
+      fixture: installationMutationFixture({ missingEquipment: true }),
+      status: 404,
+    },
+    {
+      fixture: installationMutationFixture({ revisions: [] }),
+      status: 404,
+    },
+    {
+      fixture: installationMutationFixture({
+        revisions: [{ id: 'revision-new', part_id: 'part-1', lifecycle_state: 'draft' }],
+      }),
+      status: 409,
+    },
+  ]
+  for (const { fixture, status } of cases) {
+    await assert.rejects(createInstallation({
+      equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+      installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies), (error: unknown) => error instanceof InstallationMutationError
+      && error.status === status)
+  }
+
+  const differentPart = installationMutationFixture({
+    revisions: [
+      { id: 'revision-old', part_id: 'part-old', lifecycle_state: 'released' },
+      { id: 'revision-new', part_id: 'part-new', lifecycle_state: 'released' },
+    ],
+  })
+  await createInstallation({
+    equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+    installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, differentPart.dependencies)
+  assert.equal(differentPart.updateInputs.length, 0)
+})
+
+test('installation create and remove propagate mutation failures without success audit', async () => {
+  for (const fixture of [
+    installationMutationFixture({ updateFailure: true }),
+    installationMutationFixture({ oldInstallations: [], createFailure: true }),
+  ]) {
+    await assert.rejects(createInstallation({
+      equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+      installedAt: new Date('2026-07-17T11:00:00Z'), remark: null,
+      actor: { id: 'user-1', role: 'engineer' },
+    }, fixture.dependencies), /installation (update|create) failed/)
+  }
+  const removeFixture = installationMutationFixture({ updateFailure: true })
+  await assert.rejects(removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T11:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, removeFixture.dependencies), /installation update failed/)
+  assert.equal(removeFixture.auditParams.length, 0)
+
+  const earlierFixture = installationMutationFixture()
+  await assert.rejects(removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T09:59:59Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, earlierFixture.dependencies), (error: unknown) => error instanceof InstallationMutationError
+    && error.status === 409)
+  assert.equal(earlierFixture.updateInputs.length, 0)
+  assert.equal(earlierFixture.auditParams.length, 0)
+
+  const earlierCreateFixture = installationMutationFixture()
+  await assert.rejects(createInstallation({
+    equipmentId: 'equipment-1', partRevisionId: 'revision-new',
+    installedAt: new Date('2026-07-17T09:59:59Z'), remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, earlierCreateFixture.dependencies), (error: unknown) => error instanceof InstallationMutationError
+    && error.status === 409)
+  assert.equal(earlierCreateFixture.updateInputs.length, 0)
+  assert.equal(earlierCreateFixture.createInput, undefined)
+})
+
+test('installation retries the complete transaction with a stable timestamp and preserves exhaustion type', async () => {
+  const fixture = installationMutationFixture()
+  const successfulDatabase = fixture.dependencies.db as unknown as InteractiveTransactionDatabase
+  let attempts = 0
+  fixture.dependencies.db = {
+    $transaction: async (operation, options) => {
+      attempts += 1
+      if (attempts === 1) {
+        await successfulDatabase.$transaction(operation, options)
+        throw Object.assign(new Error('retry create'), { code: 'P2034' })
+      }
+      return successfulDatabase.$transaction(operation, options)
+    },
+  } as never
+  fixture.dependencies.sleep = async () => undefined
+  const installedAt = new Date('2026-07-17T11:00:00Z')
+  await createInstallation({
+    equipmentId: 'equipment-1', partRevisionId: 'revision-new', installedAt, remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, fixture.dependencies)
+  assert.equal(attempts, 2)
+  assert.deepEqual(fixture.createInputs.map((entry) => entry.data.installed_at), [installedAt, installedAt])
+
+  let exhaustedAttempts = 0
+  const conflict = Object.assign(new Error('retry exhausted'), { code: '40001' })
+  await assert.rejects(createInstallation({
+    equipmentId: 'equipment-1', partRevisionId: 'revision-new', installedAt, remark: null,
+    actor: { id: 'user-1', role: 'engineer' },
+  }, {
+    ...fixture.dependencies,
+    db: {
+      $transaction: async () => {
+        exhaustedAttempts += 1
+        throw conflict
+      },
+    } as never,
+  }), (error: unknown) => error instanceof SerializableTransactionRetryExhaustedError
+    && error.lastError === conflict)
+  assert.equal(exhaustedAttempts, 3)
+
+  const removeFixture = installationMutationFixture()
+  const removeDatabase = removeFixture.dependencies.db as unknown as InteractiveTransactionDatabase
+  let removeAttempts = 0
+  removeFixture.dependencies.db = {
+    $transaction: async (operation, options) => {
+      removeAttempts += 1
+      if (removeAttempts === 1) {
+        await removeDatabase.$transaction(operation, options)
+        removeFixture.oldInstallation.status = 'removed'
+        removeFixture.oldInstallation.removed_at = new Date('2026-07-17T10:30:00Z')
+        throw Object.assign(new Error('retry remove'), { code: 'P2034' })
+      }
+      return removeDatabase.$transaction(operation, options)
+    },
+  } as never
+  removeFixture.dependencies.sleep = async () => undefined
+  const removed = await removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T11:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, removeFixture.dependencies)
+  assert.equal(removeAttempts, 2)
+  assert.equal(removed.removed_at?.toISOString(), '2026-07-17T10:30:00.000Z')
+  assert.equal(removeFixture.updateInputs.length, 1)
+  assert.equal(removeFixture.auditParams.length, 1)
+
+  let removeExhaustedAttempts = 0
+  await assert.rejects(removeInstallation({
+    equipmentId: 'equipment-1', installationId: 'installation-old',
+    removedAt: new Date('2026-07-17T11:00:00Z'),
+    actor: { id: 'user-1', role: 'engineer' },
+  }, {
+    ...removeFixture.dependencies,
+    db: {
+      $transaction: async () => {
+        removeExhaustedAttempts += 1
+        throw conflict
+      },
+    } as never,
+  }), (error: unknown) => error instanceof SerializableTransactionRetryExhaustedError
+    && error.lastError === conflict)
+  assert.equal(removeExhaustedAttempts, 3)
+})
+
+test('strict installation timestamp parser rejects calendar and offset regressions', () => {
+  for (const value of [
+    '2026-02-30T11:00:00Z', '2026-07-17T11:00:00', '2026-07-17 11:00:00Z',
+    '2026-07-17T11:00:00+08', '2025-02-29T11:00:00Z', '2026-07-17T24:00:00Z',
+    '2026-07-17T11:60:00Z', '2026-07-17T11:00:60Z', '2026-07-17T11:00:00+24:00',
+  ]) assert.throws(() => parseStrictRfc3339Timestamp(value))
+  assert.equal(
+    parseStrictRfc3339Timestamp('2024-02-29T19:00:00.125+08:00').normalized,
+    '2024-02-29T11:00:00.125Z',
+  )
+  assert.throws(() => parseInspectionTimestamp('2026-07-17T11:00:00.000Z', {
+    now: new Date('2026-07-17T10:59:59.999Z'),
+  }), (error: unknown) => error instanceof InspectionDomainError
+    && error.code === 'INVALID_REQUEST')
 })
 
 test('revision helper rejects an empty revision list before executing SQL', async () => {

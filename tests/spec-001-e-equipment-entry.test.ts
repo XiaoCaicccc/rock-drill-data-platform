@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import test from 'node:test'
+import test, { beforeEach } from 'node:test'
 import { NextRequest } from 'next/server'
 
 type Identity = 'admin' | 'quality_manager' | 'inspector' | 'engineer' | 'viewer' | 'anonymous'
@@ -14,6 +14,12 @@ let equipmentMutationOutcome:
   | { kind: 'domain'; status: 403 | 404 | 409; message: string }
   | { kind: 'unknown' } = { kind: 'success' }
 let lastEquipmentMutationInput: Record<string, unknown> | undefined
+let lastInstallationMutationInput: Record<string, unknown> | undefined
+let installationMutationOutcome:
+  | { kind: 'success'; installation?: Record<string, unknown> }
+  | { kind: 'domain'; status: 400 | 403 | 404 | 409; message: string }
+  | { kind: 'retry-exhausted' }
+  | { kind: 'unknown' } = { kind: 'success' }
 
 function replaceModule(modulePath: string, exports: object) {
   const filename = require.resolve(modulePath)
@@ -92,6 +98,38 @@ replaceModule('../src/lib/equipment-mutation-service.ts', {
   deleteEquipment: equipmentMutationStub,
 })
 
+const actualInstallationMutationService = require('../src/lib/installation-mutation-service.ts') as {
+  InstallationMutationError: new (status: 400 | 403 | 404 | 409, message: string) => Error
+}
+const { SerializableTransactionRetryExhaustedError } = require('../src/lib/serializable-transaction.ts') as {
+  SerializableTransactionRetryExhaustedError: new (lastError: unknown) => Error
+}
+
+async function installationMutationStub(input: Record<string, unknown>) {
+  lastInstallationMutationInput = input
+  if (installationMutationOutcome.kind === 'domain') {
+    throw new actualInstallationMutationService.InstallationMutationError(
+      installationMutationOutcome.status,
+      installationMutationOutcome.message,
+    )
+  }
+  if (installationMutationOutcome.kind === 'retry-exhausted') {
+    throw new SerializableTransactionRetryExhaustedError(
+      Object.assign(new Error('serialization failure'), { code: '40001' }),
+    )
+  }
+  if (installationMutationOutcome.kind === 'unknown') throw new Error('unexpected installation failure')
+  return installationMutationOutcome.installation ?? {
+    id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null,
+  }
+}
+
+replaceModule('../src/lib/installation-mutation-service.ts', {
+  ...actualInstallationMutationService,
+  createInstallation: installationMutationStub,
+  removeInstallation: installationMutationStub,
+})
+
 replaceModule('../src/lib/db.ts', {
   db: {
     equipment: {
@@ -110,6 +148,10 @@ const { GET } = require('../src/app/api/inspections/entry/equipment/route.ts') a
 const equipmentRoute = require('../src/app/api/equipment/route.ts') as {
   PUT: (request: NextRequest) => Promise<Response>
   DELETE: (request: NextRequest) => Promise<Response>
+}
+const installationRoute = require('../src/app/api/equipment/[id]/installations/route.ts') as {
+  POST: (request: NextRequest, context: { params: Promise<{ id: string }> }) => Promise<Response>
+  PUT: (request: NextRequest, context: { params: Promise<{ id: string }> }) => Promise<Response>
 }
 
 function request(inspectionDate = '2020-07-17T11:00:00Z') {
@@ -182,6 +224,298 @@ function putRequest(body: Record<string, unknown>) {
 function deleteRequest(id = 'equipment-1') {
   return new NextRequest(`http://localhost/api/equipment?id=${id}`, { method: 'DELETE' })
 }
+
+async function withCountingCurrentDate<T>(fixedDate: Date, callback: () => Promise<T>) {
+  const RealDate = globalThis.Date
+  let currentDateCalls = 0
+  const CountingDate = function (...args: unknown[]) {
+    if (!new.target) return RealDate()
+    if (args.length === 0) {
+      currentDateCalls += 1
+      return new RealDate(fixedDate.getTime())
+    }
+    return Reflect.construct(RealDate, args)
+  } as unknown as DateConstructor
+  Object.setPrototypeOf(CountingDate, RealDate)
+  Object.defineProperty(CountingDate, 'prototype', { value: RealDate.prototype })
+  globalThis.Date = CountingDate
+  try {
+    const result = await callback()
+    return { result, currentDateCalls }
+  } finally {
+    globalThis.Date = RealDate
+  }
+}
+
+function installationRequest(method: 'POST' | 'PUT', body: Record<string, unknown>) {
+  return new NextRequest('http://localhost/api/equipment/equipment-1/installations', {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+const installationContext = { params: Promise.resolve({ id: 'equipment-1' }) }
+
+beforeEach(() => {
+  identity = 'anonymous'
+  findManyCalls = 0
+  lastQuery = undefined
+  equipmentMutationOutcome = { kind: 'success' }
+  lastEquipmentMutationInput = undefined
+  installationMutationOutcome = { kind: 'success' }
+  lastInstallationMutationInput = undefined
+})
+
+test('installation POST production route preserves permission, time, and response contracts', async () => {
+  identity = 'anonymous'
+  let response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1' }), installationContext,
+  )
+  assert.equal(response.status, 401)
+
+  identity = 'inspector'
+  response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1' }), installationContext,
+  )
+  assert.equal(response.status, 403)
+
+  identity = 'engineer'
+  response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1', installed_at: '2026-07-17T11:00:00' }),
+    installationContext,
+  )
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), { error: 'installed_at 必须是带时区的 RFC3339 时间' })
+
+  installationMutationOutcome = { kind: 'domain', status: 409, message: '新装配时间不能早于原装配时间' }
+  response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1', installed_at: '2026-07-17T11:00:00Z' }),
+    installationContext,
+  )
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { error: '新装配时间不能早于原装配时间' })
+
+  installationMutationOutcome = { kind: 'success', installation: { id: 'installation-1', status: 'active' } }
+  response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1', installed_at: '2026-07-17T19:00:00+08:00' }),
+    installationContext,
+  )
+  assert.equal(response.status, 201)
+  assert.deepEqual(await response.json(), { installation: { id: 'installation-1', status: 'active' } })
+  assert.equal((lastInstallationMutationInput?.installedAt as Date).toISOString(), '2026-07-17T11:00:00.000Z')
+})
+
+test('installation PUT production route preserves idempotent service response and error mapping', async () => {
+  identity = 'engineer'
+  let response = await installationRoute.PUT(
+    installationRequest('PUT', { installation_id: 'installation-1', removed_at: '2026-07-17T11:00:00' }),
+    installationContext,
+  )
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), { error: 'removed_at 必须是带时区的 RFC3339 时间' })
+
+  installationMutationOutcome = { kind: 'domain', status: 404, message: '装配记录不存在' }
+  response = await installationRoute.PUT(
+    installationRequest('PUT', { installation_id: 'installation-1', removed_at: '2026-07-17T11:00:00Z' }),
+    installationContext,
+  )
+  assert.equal(response.status, 404)
+  assert.deepEqual(await response.json(), { error: '装配记录不存在' })
+
+  installationMutationOutcome = {
+    kind: 'success',
+    installation: {
+      id: 'installation-1',
+      equipment_id: 'equipment-1',
+      part_revision_id: 'revision-1',
+      installed_at: '2026-07-17T10:00:00.000Z',
+      removed_at: '2026-07-17T11:00:00.000Z',
+      status: 'removed',
+      created_by: 'user-engineer',
+      created_at: '2026-07-17T10:00:01.000Z',
+      remark: 'already removed',
+    },
+  }
+  response = await installationRoute.PUT(
+    installationRequest('PUT', { installation_id: 'installation-1', removed_at: '2026-07-17T11:00:00Z' }),
+    installationContext,
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    installation: {
+      id: 'installation-1',
+      equipment_id: 'equipment-1',
+      part_revision_id: 'revision-1',
+      installed_at: '2026-07-17T10:00:00.000Z',
+      removed_at: '2026-07-17T11:00:00.000Z',
+      status: 'removed',
+      created_by: 'user-engineer',
+      created_at: '2026-07-17T10:00:01.000Z',
+      remark: 'already removed',
+    },
+  })
+})
+
+test('installation POST production route enforces the complete role matrix', async () => {
+  for (const [role, status, body] of [
+    ['anonymous', 401, { error: '未登录' }],
+    ['viewer', 403, { error: '权限不足' }],
+    ['inspector', 403, { error: '权限不足' }],
+    ['admin', 201, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+    ['quality_manager', 201, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+    ['engineer', 201, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+  ] as const) {
+    identity = role
+    const response = await installationRoute.POST(
+      installationRequest('POST', { part_revision_id: 'revision-1' }), installationContext,
+    )
+    assert.equal(response.status, status, role)
+    assert.deepEqual(await response.json(), body, role)
+    if (status === 201) assert.equal((lastInstallationMutationInput?.actor as { role: string }).role, role)
+  }
+})
+
+test('installation PUT production route enforces the complete role matrix', async () => {
+  for (const [role, status, body] of [
+    ['anonymous', 401, { error: '未登录' }],
+    ['viewer', 403, { error: '权限不足' }],
+    ['inspector', 403, { error: '权限不足' }],
+    ['admin', 200, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+    ['quality_manager', 200, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+    ['engineer', 200, { installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null } }],
+  ] as const) {
+    identity = role
+    const response = await installationRoute.PUT(
+      installationRequest('PUT', { installation_id: 'installation-1' }), installationContext,
+    )
+    assert.equal(response.status, status, role)
+    assert.deepEqual(await response.json(), body, role)
+    if (status === 200) assert.equal((lastInstallationMutationInput?.actor as { role: string }).role, role)
+  }
+})
+
+test('installation routes preserve required fields, domain mappings, and unknown 500 contracts', async () => {
+  identity = 'engineer'
+  let response = await installationRoute.POST(installationRequest('POST', {}), installationContext)
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), { error: '缺少零件版本 ID' })
+  response = await installationRoute.PUT(installationRequest('PUT', {}), installationContext)
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), { error: '缺少装配记录 ID' })
+
+  for (const domain of [
+    { status: 400 as const, message: '请求无效' },
+    { status: 403 as const, message: '无权操作其他用户创建的资源' },
+    { status: 404 as const, message: '设备不存在' },
+    { status: 404 as const, message: '零件版本不存在' },
+    { status: 409 as const, message: '仅已发布版本允许装配' },
+    { status: 409 as const, message: '新装配时间不能早于原装配时间' },
+  ]) {
+    installationMutationOutcome = { kind: 'domain', ...domain }
+    response = await installationRoute.POST(
+      installationRequest('POST', { part_revision_id: 'revision-1' }), installationContext,
+    )
+    assert.equal(response.status, domain.status)
+    assert.deepEqual(await response.json(), { error: domain.message })
+  }
+
+  for (const domain of [
+    { status: 400 as const, message: '请求无效' },
+    { status: 403 as const, message: '无权操作其他用户创建的资源' },
+    { status: 404 as const, message: '设备不存在' },
+    { status: 404 as const, message: '装配记录不存在' },
+    { status: 409 as const, message: '拆卸时间不能早于装配时间' },
+  ]) {
+    installationMutationOutcome = { kind: 'domain', ...domain }
+    response = await installationRoute.PUT(
+      installationRequest('PUT', { installation_id: 'installation-1' }), installationContext,
+    )
+    assert.equal(response.status, domain.status)
+    assert.deepEqual(await response.json(), { error: domain.message })
+  }
+
+  for (const outcome of ['unknown', 'retry-exhausted'] as const) {
+    installationMutationOutcome = { kind: outcome }
+    response = await installationRoute.POST(
+      installationRequest('POST', { part_revision_id: 'revision-1' }), installationContext,
+    )
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), { error: '新增装配记录失败' })
+    response = await installationRoute.PUT(
+      installationRequest('PUT', { installation_id: 'installation-1' }), installationContext,
+    )
+    assert.equal(response.status, 500)
+    assert.deepEqual(await response.json(), { error: '更新装配记录失败' })
+  }
+})
+
+test('installation routes reject strict timestamp regressions and normalize valid offsets', async () => {
+  identity = 'engineer'
+  const invalid = [
+    '2026-02-30T11:00:00Z',
+    '2026-07-17T11:00:00',
+    '2026-07-17 11:00:00Z',
+    '2026-07-17T11:00:00+08',
+    '2025-02-29T11:00:00Z',
+    '2026-07-17T24:00:00Z',
+    '2026-07-17T11:60:00Z',
+    '2026-07-17T11:00:60Z',
+    '2026-07-17T11:00:00+24:00',
+  ]
+  for (const timestamp of invalid) {
+    let response = await installationRoute.POST(
+      installationRequest('POST', { part_revision_id: 'revision-1', installed_at: timestamp }), installationContext,
+    )
+    assert.equal(response.status, 400, `POST ${timestamp}`)
+    assert.deepEqual(await response.json(), { error: 'installed_at 必须是带时区的 RFC3339 时间' })
+    response = await installationRoute.PUT(
+      installationRequest('PUT', { installation_id: 'installation-1', removed_at: timestamp }), installationContext,
+    )
+    assert.equal(response.status, 400, `PUT ${timestamp}`)
+    assert.deepEqual(await response.json(), { error: 'removed_at 必须是带时区的 RFC3339 时间' })
+  }
+
+  installationMutationOutcome = { kind: 'success' }
+  let response = await installationRoute.POST(
+    installationRequest('POST', { part_revision_id: 'revision-1', installed_at: '2024-02-29T19:00:00.125+08:00' }),
+    installationContext,
+  )
+  assert.equal(response.status, 201)
+  assert.deepEqual(await response.json(), {
+    installation: { id: 'installation-1', equipment_id: 'equipment-1', status: 'active', removed_at: null },
+  })
+  assert.equal((lastInstallationMutationInput?.installedAt as Date).toISOString(), '2024-02-29T11:00:00.125Z')
+
+})
+
+test('installation POST captures an omitted installed_at exactly once per request', async () => {
+  identity = 'engineer'
+  installationMutationOutcome = { kind: 'success' }
+  const fixedDate = new Date('2026-07-19T01:02:03.456Z')
+  const routeRequest = installationRequest('POST', { part_revision_id: 'revision-1' })
+  const { result: response, currentDateCalls } = await withCountingCurrentDate(
+    fixedDate,
+    () => installationRoute.POST(routeRequest, installationContext),
+  )
+  assert.equal(response.status, 201)
+  assert.equal((lastInstallationMutationInput?.installedAt as Date).getTime(), fixedDate.getTime())
+  assert.equal(currentDateCalls, 1)
+})
+
+test('installation PUT captures an omitted removed_at exactly once per request', async () => {
+  identity = 'engineer'
+  installationMutationOutcome = { kind: 'success' }
+  const fixedDate = new Date('2026-07-19T02:03:04.567Z')
+  const routeRequest = installationRequest('PUT', { installation_id: 'installation-1' })
+  const { result: response, currentDateCalls } = await withCountingCurrentDate(
+    fixedDate,
+    () => installationRoute.PUT(routeRequest, installationContext),
+  )
+  assert.equal(response.status, 200)
+  assert.equal((lastInstallationMutationInput?.removedAt as Date).getTime(), fixedDate.getTime())
+  assert.equal(currentDateCalls, 1)
+})
 
 test('equipment PUT production route preserves authentication, errors, and success contract', async () => {
   identity = 'anonymous'

@@ -9,6 +9,10 @@ import {
   EquipmentMutationError,
   updateEquipment,
 } from '../../src/lib/equipment-mutation-service'
+import {
+  createInstallation,
+  removeInstallation,
+} from '../../src/lib/installation-mutation-service'
 import type { BatchInspectionRequest } from '../../src/lib/inspection-integrity'
 import type { Spec001EPostgresFixture } from './spec-001-e-postgres'
 
@@ -21,6 +25,46 @@ export type PostgresScenarioResult = {
 }
 
 type Seed = Awaited<ReturnType<typeof seedScenario>>
+
+type ProtectedScenarioLifecycle<TSeed, TResult> = {
+  seed: () => Promise<TSeed>
+  execute: (seed: TSeed) => Promise<TResult>
+  cleanup: () => Promise<void>
+}
+
+export async function runProtectedScenarioLifecycle<TSeed, TResult>(
+  lifecycle: ProtectedScenarioLifecycle<TSeed, TResult>,
+): Promise<TResult> {
+  let outcome:
+    | { ok: true; value: TResult }
+    | { ok: false; error: unknown }
+    | undefined
+  let cleanupError: unknown
+
+  try {
+    const seed = await lifecycle.seed()
+    outcome = { ok: true, value: await lifecycle.execute(seed) }
+  } catch (error) {
+    outcome = { ok: false, error }
+  } finally {
+    try {
+      await lifecycle.cleanup()
+    } catch (error) {
+      cleanupError = error
+    }
+  }
+
+  if (!outcome) throw new Error('SPEC-001-E scenario lifecycle produced no outcome')
+  if (!outcome.ok && cleanupError) {
+    throw new AggregateError(
+      [outcome.error, cleanupError],
+      'SPEC-001-E scenario execution and cleanup both failed',
+    )
+  }
+  if (!outcome.ok) throw outcome.error
+  if (cleanupError) throw cleanupError
+  return outcome.value
+}
 
 function deferred() {
   let resolve!: () => void
@@ -50,9 +94,13 @@ async function remainsPending(promise: Promise<unknown>, milliseconds = 100) {
   return state === 'pending'
 }
 
-async function seedScenario(fixture: Spec001EPostgresFixture) {
-  const { prisma, runId } = fixture
-  const suffix = runId.replace(/[^a-zA-Z0-9]/g, '').slice(-20)
+function scenarioSuffix(runId: string) {
+  return runId.replace(/[^a-zA-Z0-9]/g, '').slice(-20)
+}
+
+async function seedScenario(fixture: Spec001EPostgresFixture, runId: string) {
+  const { prisma } = fixture
+  const suffix = scenarioSuffix(runId)
   const user = await prisma.user.create({
     data: {
       email: `${suffix}@spec001e.test`,
@@ -186,18 +234,33 @@ async function counts(seed: Seed, fixture: Spec001EPostgresFixture) {
   return { committedRecords: records.length, committedItems, successAudits }
 }
 
-async function cleanup(seed: Seed, fixture: Spec001EPostgresFixture) {
+async function cleanupScenarioByRunId(runId: string, fixture: Spec001EPostgresFixture) {
   const { prisma } = fixture
-  await prisma.auditLog.deleteMany({ where: { userId: seed.user.id } })
-  await prisma.inspection_record.deleteMany({ where: { user_id: seed.user.id } })
-  await prisma.equipment_part_installation.deleteMany({ where: { equipment_id: seed.equipment.id } })
-  await prisma.parameter_item.deleteMany({ where: { template_id: { in: [seed.template.id, seed.wrongTemplate.id] } } })
-  await prisma.parameter_template.deleteMany({ where: { id: { in: [seed.template.id, seed.wrongTemplate.id] } } })
-  await prisma.part_revision.deleteMany({ where: { part_id: seed.part.id } })
-  await prisma.part.delete({ where: { id: seed.part.id } })
-  await prisma.equipment.delete({ where: { id: seed.equipment.id } })
-  await prisma.part_category.deleteMany({ where: { id: { in: [seed.category.id, seed.wrongCategory.id] } } })
-  await prisma.user.delete({ where: { id: seed.user.id } })
+  const suffix = scenarioSuffix(runId)
+  const user = await prisma.user.findUnique({
+    where: { email: `${suffix}@spec001e.test` },
+    select: { id: true },
+  })
+  if (!user) return
+
+  const [records, templates] = await Promise.all([
+    prisma.inspection_record.findMany({ where: { user_id: user.id }, select: { id: true } }),
+    prisma.parameter_template.findMany({ where: { created_by: user.id }, select: { id: true } }),
+  ])
+  const recordIds = records.map((record) => record.id)
+  const templateIds = templates.map((template) => template.id)
+
+  await prisma.inspection_data_item.deleteMany({ where: { record_id: { in: recordIds } } })
+  await prisma.auditLog.deleteMany({ where: { userId: user.id } })
+  await prisma.inspection_record.deleteMany({ where: { id: { in: recordIds } } })
+  await prisma.equipment_part_installation.deleteMany({ where: { created_by: user.id } })
+  await prisma.parameter_item.deleteMany({ where: { template_id: { in: templateIds } } })
+  await prisma.parameter_template.deleteMany({ where: { id: { in: templateIds } } })
+  await prisma.part_revision.deleteMany({ where: { created_by: user.id } })
+  await prisma.part.deleteMany({ where: { created_by: user.id } })
+  await prisma.equipment.deleteMany({ where: { created_by: user.id } })
+  await prisma.part_category.deleteMany({ where: { created_by: user.id } })
+  await prisma.user.delete({ where: { id: user.id } })
 }
 
 async function removalScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
@@ -363,6 +426,580 @@ const equipmentActor = (seed: Seed) => ({
   role: 'engineer' as const,
 })
 
+const installationDependencies = (fixture: Spec001EPostgresFixture) => ({
+  db: fixture.prisma,
+  audit: logAudit,
+  random: () => 0,
+  sleep: async () => undefined,
+})
+
+async function installationAuditCount(seed: Seed, fixture: Spec001EPostgresFixture) {
+  return fixture.prisma.auditLog.count({
+    where: {
+      userId: seed.user.id,
+      entityType: 'equipment_part_installation',
+    },
+  })
+}
+
+function auditObject(value: Prisma.JsonValue | null): Record<string, Prisma.JsonValue> {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value))
+  return value as Record<string, Prisma.JsonValue>
+}
+
+function auditDate(value: Prisma.JsonValue | undefined) {
+  assert.equal(typeof value, 'string')
+  return new Date(value as string)
+}
+
+async function installationPostCreateAuditRollbackScenario(
+  seed: Seed,
+  fixture: Spec001EPostgresFixture,
+) {
+  await fixture.prisma.equipment_part_installation.update({
+    where: { id: seed.installation.id },
+    data: { status: 'removed', removed_at: seed.inspectionDate },
+  })
+  await assert.rejects(createInstallation({
+    equipmentId: seed.equipment.id,
+    partRevisionId: seed.replacementRevision.id,
+    installedAt: new Date(seed.inspectionDate.getTime() + 1),
+    remark: 'PG-INST-01',
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async () => { throw new Error('forced installation CREATE audit failure') },
+  }), /forced installation CREATE audit failure/)
+  const [activeRows, totalRows, successAudits] = await Promise.all([
+    fixture.prisma.equipment_part_installation.count({
+      where: { equipment_id: seed.equipment.id, status: 'active', removed_at: null },
+    }),
+    fixture.prisma.equipment_part_installation.count({ where: { equipment_id: seed.equipment.id } }),
+    installationAuditCount(seed, fixture),
+  ])
+  return {
+    committedRecords: 0,
+    committedItems: 0,
+    successAudits,
+    integrityPreserved: activeRows === 0 && totalRows === 1 && successAudits === 0,
+    proof: { activeRows, totalRows, successAudits },
+  }
+}
+
+async function installationPostReplacementAuditRollbackScenario(
+  seed: Seed,
+  fixture: Spec001EPostgresFixture,
+) {
+  const before = await fixture.prisma.equipment_part_installation.findUniqueOrThrow({
+    where: { id: seed.installation.id },
+  })
+  await assert.rejects(createInstallation({
+    equipmentId: seed.equipment.id,
+    partRevisionId: seed.replacementRevision.id,
+    installedAt: seed.inspectionDate,
+    remark: 'PG-INST-02',
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async (params) => {
+      if (params.action === 'UPDATE') throw new Error('forced replacement audit failure')
+      throw new Error('CREATE audit must not be reached')
+    },
+  }), /forced replacement audit failure/)
+  const [after, newRows, successAudits] = await Promise.all([
+    fixture.prisma.equipment_part_installation.findUniqueOrThrow({ where: { id: seed.installation.id } }),
+    fixture.prisma.equipment_part_installation.count({
+      where: { equipment_id: seed.equipment.id, part_revision_id: seed.replacementRevision.id },
+    }),
+    installationAuditCount(seed, fixture),
+  ])
+  const oldUnchanged = JSON.stringify(after) === JSON.stringify(before)
+  return {
+    committedRecords: 0,
+    committedItems: 0,
+    successAudits,
+    integrityPreserved: oldUnchanged && newRows === 0 && successAudits === 0,
+    proof: { oldUnchanged, newRows, successAudits },
+  }
+}
+
+async function batchAndInstallationPostLockScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const batchAtAudit = deferred()
+  const releaseBatch = deferred()
+  const installedAt = new Date(seed.inspectionDate.getTime() + 1)
+  const batch = createInspectionBatch(requestFor(seed), { userId: seed.user.id }, {
+    db: fixture.prisma,
+    audit: async (params, tx) => {
+      batchAtAudit.resolve()
+      await withTimeout(releaseBatch.promise, 'release PG-INST-03 Batch barrier')
+      return logAudit(params, tx)
+    },
+  })
+  let post: ReturnType<typeof createInstallation> | undefined
+  try {
+    await withTimeout(batchAtAudit.promise, 'PG-INST-03 Batch audit barrier')
+    post = createInstallation({
+      equipmentId: seed.equipment.id,
+      partRevisionId: seed.replacementRevision.id,
+      installedAt,
+      remark: 'PG-INST-03',
+      actor: equipmentActor(seed),
+    }, installationDependencies(fixture))
+    const postWaitedForBatch = await remainsPending(post)
+    assert.equal(postWaitedForBatch, true)
+    releaseBatch.resolve()
+    const [record, installation] = await Promise.all([
+      withTimeout(batch, 'PG-INST-03 Batch completion'),
+      withTimeout(post, 'PG-INST-03 POST completion'),
+    ])
+    const [persistedRecord, persistedInstallation, persistedOld, installationCreateAudits,
+      installationUpdateAudits, batchAudits] = await Promise.all([
+      fixture.prisma.inspection_record.findUnique({
+        where: { id: record.id },
+        include: { data_items: true },
+      }),
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: installation.id } }),
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: seed.installation.id } }),
+      fixture.prisma.auditLog.findMany({
+        where: {
+          userId: seed.user.id,
+          action: 'CREATE',
+          entityType: 'equipment_part_installation',
+          entityId: installation.id,
+        },
+      }),
+      fixture.prisma.auditLog.findMany({
+        where: {
+          userId: seed.user.id,
+          action: 'UPDATE',
+          entityType: 'equipment_part_installation',
+          entityId: seed.installation.id,
+        },
+      }),
+      fixture.prisma.auditLog.findMany({
+        where: {
+          userId: seed.user.id,
+          action: 'CREATE',
+          entityType: 'inspection_record',
+          entityId: record.id,
+        },
+      }),
+    ])
+    assert.ok(persistedRecord)
+    assert.equal(persistedRecord.data_items.length, 1)
+    assert.ok(persistedInstallation)
+    assert.equal(persistedInstallation.equipment_id, seed.equipment.id)
+    assert.equal(persistedInstallation.part_revision_id, seed.replacementRevision.id)
+    assert.equal(persistedInstallation.status, 'active')
+    assert.equal(persistedInstallation.removed_at, null)
+    assert.equal(persistedInstallation.installed_at.getTime(), installedAt.getTime())
+    assert.ok(persistedOld)
+    assert.equal(persistedOld.status, 'removed')
+    assert.equal(persistedOld.removed_at?.getTime(), installedAt.getTime())
+
+    assert.equal(installationCreateAudits.length, 1)
+    const createAfter = auditObject(installationCreateAudits[0].after)
+    assert.equal(createAfter.equipment_id, seed.equipment.id)
+    assert.equal(createAfter.part_revision_id, seed.replacementRevision.id)
+    assert.equal(auditDate(createAfter.installed_at).getTime(), installedAt.getTime())
+    assert.equal(createAfter.status, 'active')
+    assert.equal(installationUpdateAudits.length, 1)
+    const updateAfter = auditObject(installationUpdateAudits[0].after)
+    assert.equal(updateAfter.status, 'removed')
+    assert.equal(auditDate(updateAfter.removed_at).getTime(), installedAt.getTime())
+
+    assert.equal(batchAudits.length, 1)
+    const batchAfter = auditObject(batchAudits[0].after)
+    assert.equal(batchAfter.record_no, persistedRecord.record_no)
+    assert.equal(batchAfter.item_count, 1)
+
+    const batchCounts = await counts(seed, fixture)
+    return {
+      ...batchCounts,
+      integrityPreserved: postWaitedForBatch
+        && batchCounts.committedRecords === 1
+        && batchCounts.committedItems === 1
+        && batchCounts.successAudits === 1,
+      proof: {
+        postWaitedForBatch,
+        recordId: record.id,
+        installationId: installation.id,
+        installationCreateAudits: installationCreateAudits.length,
+        installationUpdateAudits: installationUpdateAudits.length,
+        batchAudits: batchAudits.length,
+      },
+    }
+  } finally {
+    releaseBatch.resolve()
+    await Promise.allSettled([batch, ...(post ? [post] : [])])
+  }
+}
+
+async function replacementBeforeBatchRevalidationScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const postAtCreateAudit = deferred()
+  const releasePost = deferred()
+  const replacementAt = new Date(seed.inspectionDate.getTime() - 1_000)
+  const post = createInstallation({
+    equipmentId: seed.equipment.id,
+    partRevisionId: seed.replacementRevision.id,
+    installedAt: replacementAt,
+    remark: 'PG-INST-04',
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async (params, tx) => {
+      if (params.action === 'CREATE') {
+        postAtCreateAudit.resolve()
+        await withTimeout(releasePost.promise, 'release PG-INST-04 POST barrier')
+      }
+      return logAudit(params, tx)
+    },
+  })
+  let batchOutcome: Promise<{ error: unknown }> | undefined
+  try {
+    await withTimeout(postAtCreateAudit.promise, 'PG-INST-04 CREATE audit barrier')
+    batchOutcome = createInspectionBatch(requestFor(seed), { userId: seed.user.id }, {
+      db: fixture.prisma,
+      random: () => 0,
+      sleep: async () => undefined,
+    }).then(() => ({ error: undefined }), (error: unknown) => ({ error }))
+    const batchWaitedForPost = await remainsPending(batchOutcome)
+    assert.equal(batchWaitedForPost, true)
+    releasePost.resolve()
+    const [installation, { error }] = await Promise.all([
+      withTimeout(post, 'PG-INST-04 POST completion'),
+      withTimeout(batchOutcome, 'PG-INST-04 Batch completion'),
+    ])
+    const [countsAfter, persistedOld, persistedNew, oldUpdateAudits, newCreateAudits] = await Promise.all([
+      counts(seed, fixture),
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: seed.installation.id } }),
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: installation.id } }),
+      fixture.prisma.auditLog.findMany({
+        where: {
+          userId: seed.user.id,
+          action: 'UPDATE',
+          entityType: 'equipment_part_installation',
+          entityId: seed.installation.id,
+        },
+      }),
+      fixture.prisma.auditLog.findMany({
+        where: {
+          userId: seed.user.id,
+          action: 'CREATE',
+          entityType: 'equipment_part_installation',
+          entityId: installation.id,
+        },
+      }),
+    ])
+    const rejected = error instanceof InspectionDomainError
+      && error.code === 'INSTALLATION_NOT_ELIGIBLE'
+    assert.ok(persistedOld)
+    assert.equal(persistedOld.equipment_id, seed.equipment.id)
+    assert.equal(persistedOld.part_revision_id, seed.revision.id)
+    assert.equal(persistedOld.installed_at.getTime(), seed.installation.installed_at.getTime())
+    assert.equal(persistedOld.status, 'removed')
+    assert.equal(persistedOld.removed_at?.getTime(), replacementAt.getTime())
+    assert.ok(persistedNew)
+    assert.equal(persistedNew.equipment_id, seed.equipment.id)
+    assert.equal(persistedNew.part_revision_id, seed.replacementRevision.id)
+    assert.equal(persistedNew.installed_at.getTime(), replacementAt.getTime())
+    assert.equal(persistedNew.status, 'active')
+    assert.equal(persistedNew.removed_at, null)
+
+    assert.equal(oldUpdateAudits.length, 1)
+    const oldBefore = auditObject(oldUpdateAudits[0].before)
+    const oldAfter = auditObject(oldUpdateAudits[0].after)
+    assert.equal(oldBefore.status, 'active')
+    assert.equal(oldBefore.removed_at, null)
+    assert.equal(oldAfter.status, 'removed')
+    assert.equal(auditDate(oldAfter.removed_at).getTime(), replacementAt.getTime())
+    assert.equal(newCreateAudits.length, 1)
+    const newAfter = auditObject(newCreateAudits[0].after)
+    assert.equal(newAfter.equipment_id, seed.equipment.id)
+    assert.equal(newAfter.part_revision_id, seed.replacementRevision.id)
+    assert.equal(auditDate(newAfter.installed_at).getTime(), replacementAt.getTime())
+    assert.equal(newAfter.status, 'active')
+    return {
+      ...countsAfter,
+      integrityPreserved: batchWaitedForPost && rejected
+        && countsAfter.committedRecords === 0
+        && countsAfter.committedItems === 0
+        && countsAfter.successAudits === 0,
+      proof: {
+        batchWaitedForPost,
+        rejected,
+        oldUpdateAudits: oldUpdateAudits.length,
+        newCreateAudits: newCreateAudits.length,
+        ...countsAfter,
+      },
+    }
+  } finally {
+    releasePost.resolve()
+    await Promise.allSettled([post, ...(batchOutcome ? [batchOutcome] : [])])
+  }
+}
+
+async function removalBeforeBatchRevalidationScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const putAtAudit = deferred()
+  const releasePut = deferred()
+  const removedAt = new Date(seed.inspectionDate.getTime() - 1_000)
+  const put = removeInstallation({
+    equipmentId: seed.equipment.id,
+    installationId: seed.installation.id,
+    removedAt,
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async (params, tx) => {
+      putAtAudit.resolve()
+      await withTimeout(releasePut.promise, 'release PG-INST-05 PUT barrier')
+      return logAudit(params, tx)
+    },
+  })
+  let batchOutcome: Promise<{ error: unknown }> | undefined
+  try {
+    await withTimeout(putAtAudit.promise, 'PG-INST-05 PUT audit barrier')
+    batchOutcome = createInspectionBatch(requestFor(seed), { userId: seed.user.id }, {
+      db: fixture.prisma,
+      random: () => 0,
+      sleep: async () => undefined,
+    }).then(() => ({ error: undefined }), (error: unknown) => ({ error }))
+    const batchWaitedForPut = await remainsPending(batchOutcome)
+    assert.equal(batchWaitedForPut, true)
+    releasePut.resolve()
+    const [removed, { error }] = await Promise.all([
+      withTimeout(put, 'PG-INST-05 PUT completion'),
+      withTimeout(batchOutcome, 'PG-INST-05 Batch completion'),
+    ])
+    const [countsAfter, successAudits] = await Promise.all([
+      counts(seed, fixture),
+      installationAuditCount(seed, fixture),
+    ])
+    const rejected = error instanceof InspectionDomainError
+      && error.code === 'INSTALLATION_NOT_ELIGIBLE'
+    return {
+      ...countsAfter,
+      successAudits,
+      integrityPreserved: removed.removed_at?.getTime() === removedAt.getTime()
+        && batchWaitedForPut && rejected
+        && countsAfter.committedRecords === 0
+        && countsAfter.committedItems === 0
+        && successAudits === 1,
+      proof: { batchWaitedForPut, rejected, successAudits },
+    }
+  } finally {
+    releasePut.resolve()
+    await Promise.allSettled([put, ...(batchOutcome ? [batchOutcome] : [])])
+  }
+}
+
+async function installationPutAuditRollbackScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const before = await fixture.prisma.equipment_part_installation.findUniqueOrThrow({
+    where: { id: seed.installation.id },
+  })
+  await assert.rejects(removeInstallation({
+    equipmentId: seed.equipment.id,
+    installationId: seed.installation.id,
+    removedAt: seed.inspectionDate,
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async () => { throw new Error('forced installation PUT audit failure') },
+  }), /forced installation PUT audit failure/)
+  const [after, successAudits] = await Promise.all([
+    fixture.prisma.equipment_part_installation.findUniqueOrThrow({ where: { id: seed.installation.id } }),
+    installationAuditCount(seed, fixture),
+  ])
+  const unchanged = JSON.stringify(after) === JSON.stringify(before)
+  return {
+    committedRecords: 0,
+    committedItems: 0,
+    successAudits,
+    integrityPreserved: unchanged && successAudits === 0,
+    proof: { unchanged, successAudits },
+  }
+}
+
+async function concurrentInstallationPostScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const firstAtCreateAudit = deferred()
+  const releaseFirst = deferred()
+  const firstAt = new Date(seed.inspectionDate.getTime() - 2_000)
+  const secondAt = new Date(seed.inspectionDate.getTime() - 1_000)
+  const firstActor = equipmentActor(seed)
+  const secondActor = equipmentActor(seed)
+  const first = createInstallation({
+    equipmentId: seed.equipment.id,
+    partRevisionId: seed.replacementRevision.id,
+    installedAt: firstAt,
+    remark: 'PG-INST-07-A',
+    actor: firstActor,
+  }, {
+    ...installationDependencies(fixture),
+    audit: async (params, tx) => {
+      if (params.action === 'CREATE') {
+        firstAtCreateAudit.resolve()
+        await withTimeout(releaseFirst.promise, 'release PG-INST-07 first POST')
+      }
+      return logAudit(params, tx)
+    },
+  })
+  let second: ReturnType<typeof createInstallation> | undefined
+  try {
+    await withTimeout(firstAtCreateAudit.promise, 'PG-INST-07 first CREATE audit barrier')
+    second = createInstallation({
+      equipmentId: seed.equipment.id,
+      partRevisionId: seed.revision.id,
+      installedAt: secondAt,
+      remark: 'PG-INST-07-B',
+      actor: secondActor,
+    }, installationDependencies(fixture))
+    const secondWaitedForFirst = await remainsPending(second)
+    assert.equal(secondWaitedForFirst, true)
+    releaseFirst.resolve()
+    const [firstRow, secondRow] = await Promise.all([
+      withTimeout(first, 'PG-INST-07 first POST completion'),
+      withTimeout(second, 'PG-INST-07 second POST completion'),
+    ])
+    const [persistedFirst, persistedSecond, activeRows, audits] = await Promise.all([
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: firstRow.id } }),
+      fixture.prisma.equipment_part_installation.findUnique({ where: { id: secondRow.id } }),
+      fixture.prisma.equipment_part_installation.findMany({
+        where: {
+          equipment_id: seed.equipment.id,
+          part_revision: { part_id: seed.part.id },
+          status: 'active',
+          removed_at: null,
+        },
+      }),
+      fixture.prisma.auditLog.findMany({
+        where: { userId: seed.user.id, entityType: 'equipment_part_installation' },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ])
+    assert.ok(persistedFirst)
+    assert.equal(persistedFirst.installed_at.getTime(), firstAt.getTime())
+    assert.equal(persistedFirst.status, 'removed')
+    assert.equal(persistedFirst.removed_at?.getTime(), secondAt.getTime())
+    assert.ok(persistedSecond)
+    assert.equal(persistedSecond.installed_at.getTime(), secondAt.getTime())
+    assert.equal(persistedSecond.status, 'active')
+    assert.equal(persistedSecond.removed_at, null)
+
+    const seedUpdateAudits = audits.filter((audit) => (
+      audit.userId === firstActor.id
+      && audit.action === 'UPDATE'
+      && audit.entityId === seed.installation.id
+    ))
+    const firstCreateAudits = audits.filter((audit) => (
+      audit.userId === firstActor.id
+      && audit.action === 'CREATE'
+      && audit.entityId === firstRow.id
+    ))
+    const firstUpdateAudits = audits.filter((audit) => (
+      audit.userId === secondActor.id
+      && audit.action === 'UPDATE'
+      && audit.entityId === firstRow.id
+    ))
+    const secondCreateAudits = audits.filter((audit) => (
+      audit.userId === secondActor.id
+      && audit.action === 'CREATE'
+      && audit.entityId === secondRow.id
+    ))
+    assert.equal(seedUpdateAudits.length, 1)
+    assert.equal(firstCreateAudits.length, 1)
+    const firstCreateAfter = auditObject(firstCreateAudits[0].after)
+    assert.equal(firstCreateAfter.status, 'active')
+    assert.equal(auditDate(firstCreateAfter.installed_at).getTime(), firstAt.getTime())
+    assert.equal(firstUpdateAudits.length, 1)
+    const firstUpdateBefore = auditObject(firstUpdateAudits[0].before)
+    const firstUpdateAfter = auditObject(firstUpdateAudits[0].after)
+    assert.equal(firstUpdateBefore.status, 'active')
+    assert.equal(firstUpdateBefore.removed_at, null)
+    assert.equal(firstUpdateAfter.status, 'removed')
+    assert.equal(auditDate(firstUpdateAfter.removed_at).getTime(), secondAt.getTime())
+    assert.equal(secondCreateAudits.length, 1)
+    const secondCreateAfter = auditObject(secondCreateAudits[0].after)
+    assert.equal(secondCreateAfter.status, 'active')
+    assert.equal(auditDate(secondCreateAfter.installed_at).getTime(), secondAt.getTime())
+    return {
+      committedRecords: 0,
+      committedItems: 0,
+      successAudits: audits.length,
+      integrityPreserved: secondWaitedForFirst
+        && activeRows.length === 1
+        && activeRows[0].id === secondRow.id
+        && audits.length === 4
+        && firstRow.id !== secondRow.id,
+      proof: {
+        secondWaitedForFirst,
+        activeIds: activeRows.map((row) => row.id),
+        seedUpdateAudits: seedUpdateAudits.length,
+        firstCreateAudits: firstCreateAudits.length,
+        firstUpdateAudits: firstUpdateAudits.length,
+        secondCreateAudits: secondCreateAudits.length,
+      },
+    }
+  } finally {
+    releaseFirst.resolve()
+    await Promise.allSettled([first, ...(second ? [second] : [])])
+  }
+}
+
+async function concurrentInstallationPutScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const firstAtAudit = deferred()
+  const releaseFirst = deferred()
+  const firstAt = new Date(seed.inspectionDate.getTime() - 2_000)
+  const secondAt = new Date(seed.inspectionDate.getTime() - 1_000)
+  const first = removeInstallation({
+    equipmentId: seed.equipment.id,
+    installationId: seed.installation.id,
+    removedAt: firstAt,
+    actor: equipmentActor(seed),
+  }, {
+    ...installationDependencies(fixture),
+    audit: async (params, tx) => {
+      firstAtAudit.resolve()
+      await withTimeout(releaseFirst.promise, 'release PG-INST-08 first PUT')
+      return logAudit(params, tx)
+    },
+  })
+  let second: ReturnType<typeof removeInstallation> | undefined
+  try {
+    await withTimeout(firstAtAudit.promise, 'PG-INST-08 first PUT audit barrier')
+    second = removeInstallation({
+      equipmentId: seed.equipment.id,
+      installationId: seed.installation.id,
+      removedAt: secondAt,
+      actor: equipmentActor(seed),
+    }, installationDependencies(fixture))
+    const secondWaitedForFirst = await remainsPending(second)
+    assert.equal(secondWaitedForFirst, true)
+    releaseFirst.resolve()
+    const [firstRow, secondRow] = await Promise.all([
+      withTimeout(first, 'PG-INST-08 first PUT completion'),
+      withTimeout(second, 'PG-INST-08 second PUT completion'),
+    ])
+    const [persisted, successAudits] = await Promise.all([
+      fixture.prisma.equipment_part_installation.findUniqueOrThrow({ where: { id: seed.installation.id } }),
+      installationAuditCount(seed, fixture),
+    ])
+    return {
+      committedRecords: 0,
+      committedItems: 0,
+      successAudits,
+      integrityPreserved: secondWaitedForFirst
+        && persisted.removed_at?.getTime() === firstAt.getTime()
+        && firstRow.removed_at?.getTime() === firstAt.getTime()
+        && secondRow.removed_at?.getTime() === firstAt.getTime()
+        && successAudits === 1,
+      proof: { secondWaitedForFirst, removedAt: persisted.removed_at, successAudits },
+    }
+  } finally {
+    releaseFirst.resolve()
+    await Promise.allSettled([first, ...(second ? [second] : [])])
+  }
+}
+
 async function equipmentPutAuditRollbackScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
   const before = await fixture.prisma.equipment.findUniqueOrThrow({
     where: { id: seed.equipment.id },
@@ -406,33 +1043,29 @@ async function equipmentDeleteAuditRollbackScenario(seed: Seed, fixture: Spec001
       created_by: seed.user.id,
     },
   })
-  try {
-    await assert.rejects(deleteEquipment({
-      equipmentId: deletable.id,
-      actor: equipmentActor(seed),
-    }, {
-      db: fixture.prisma,
-      audit: async () => { throw new Error('forced equipment DELETE audit failure') },
-    }), /forced equipment DELETE audit failure/)
-    const after = await fixture.prisma.equipment.findUnique({ where: { id: deletable.id } })
-    const successAudits = await fixture.prisma.auditLog.count({
-      where: {
-        userId: seed.user.id,
-        action: 'DELETE',
-        entityType: 'equipment',
-        entityId: deletable.id,
-      },
-    })
-    const equipmentPreserved = JSON.stringify(after) === JSON.stringify(deletable)
-    return {
-      committedRecords: 0,
-      committedItems: 0,
-      successAudits,
-      integrityPreserved: equipmentPreserved && successAudits === 0,
-      proof: { equipmentPreserved },
-    }
-  } finally {
-    await fixture.prisma.equipment.deleteMany({ where: { id: deletable.id } })
+  await assert.rejects(deleteEquipment({
+    equipmentId: deletable.id,
+    actor: equipmentActor(seed),
+  }, {
+    db: fixture.prisma,
+    audit: async () => { throw new Error('forced equipment DELETE audit failure') },
+  }), /forced equipment DELETE audit failure/)
+  const after = await fixture.prisma.equipment.findUnique({ where: { id: deletable.id } })
+  const successAudits = await fixture.prisma.auditLog.count({
+    where: {
+      userId: seed.user.id,
+      action: 'DELETE',
+      entityType: 'equipment',
+      entityId: deletable.id,
+    },
+  })
+  const equipmentPreserved = JSON.stringify(after) === JSON.stringify(deletable)
+  return {
+    committedRecords: 0,
+    committedItems: 0,
+    successAudits,
+    integrityPreserved: equipmentPreserved && successAudits === 0,
+    proof: { equipmentPreserved },
   }
 }
 
@@ -610,40 +1243,42 @@ async function concurrentMachineNumberScenario(seed: Seed, fixture: Spec001EPost
   } finally {
     releaseAudit.resolve()
     await Promise.allSettled([updateA, ...(updateB ? [updateB] : [])])
-    await fixture.prisma.auditLog.deleteMany({
-      where: { entityType: 'equipment', entityId: { in: equipmentIds } },
-    })
-    await fixture.prisma.equipment.deleteMany({ where: { id: { in: equipmentIds } } })
   }
+}
+
+async function executeScenario(
+  seed: Seed,
+  fixture: Spec001EPostgresFixture,
+  scenario: string,
+): Promise<PostgresScenarioResult> {
+  if (scenario.startsWith('PG-INST-01')) return installationPostCreateAuditRollbackScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-02')) return installationPostReplacementAuditRollbackScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-03')) return batchAndInstallationPostLockScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-04')) return replacementBeforeBatchRevalidationScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-05')) return removalBeforeBatchRevalidationScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-06')) return installationPutAuditRollbackScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-07')) return concurrentInstallationPostScenario(seed, fixture)
+  if (scenario.startsWith('PG-INST-08')) return concurrentInstallationPutScenario(seed, fixture)
+  if (scenario.includes('PUT audit failure')) return equipmentPutAuditRollbackScenario(seed, fixture)
+  if (scenario.includes('DELETE audit failure')) return equipmentDeleteAuditRollbackScenario(seed, fixture)
+  if (scenario.includes('Batch and Equipment PUT')) return batchAndEquipmentPutLockScenario(seed, fixture)
+  if (scenario.includes('Batch and Equipment DELETE')) return batchAndEquipmentDeleteLockScenario(seed, fixture)
+  if (scenario.includes('concurrent equipment machine_no')) return concurrentMachineNumberScenario(seed, fixture)
+  if (scenario.includes('installation removal')) return removalScenario(seed, fixture)
+  if (scenario.includes('replacement')) return replacementScenario(seed, fixture)
+  if (scenario.includes('rolls back')) return rollbackScenario(seed, fixture)
+  if (scenario.includes('record_no')) return recordNumberScenario(seed, fixture)
+  assert.fail(`Unknown SPEC-001-E PostgreSQL scenario: ${scenario}`)
 }
 
 export async function runSpec001EPostgresScenario(
   fixture: Spec001EPostgresFixture,
   scenario: string,
 ): Promise<PostgresScenarioResult> {
-  const seed = await seedScenario(fixture)
-  try {
-    if (scenario.includes('PUT audit failure')) {
-      return await equipmentPutAuditRollbackScenario(seed, fixture)
-    }
-    if (scenario.includes('DELETE audit failure')) {
-      return await equipmentDeleteAuditRollbackScenario(seed, fixture)
-    }
-    if (scenario.includes('Batch and Equipment PUT')) {
-      return await batchAndEquipmentPutLockScenario(seed, fixture)
-    }
-    if (scenario.includes('Batch and Equipment DELETE')) {
-      return await batchAndEquipmentDeleteLockScenario(seed, fixture)
-    }
-    if (scenario.includes('concurrent equipment machine_no')) {
-      return await concurrentMachineNumberScenario(seed, fixture)
-    }
-    if (scenario.includes('installation removal')) return await removalScenario(seed, fixture)
-    if (scenario.includes('replacement')) return await replacementScenario(seed, fixture)
-    if (scenario.includes('rolls back')) return await rollbackScenario(seed, fixture)
-    if (scenario.includes('record_no')) return await recordNumberScenario(seed, fixture)
-    assert.fail(`Unknown SPEC-001-E PostgreSQL scenario: ${scenario}`)
-  } finally {
-    await cleanup(seed, fixture)
-  }
+  const runId = fixture.runId
+  return runProtectedScenarioLifecycle({
+    seed: () => seedScenario(fixture, runId),
+    execute: (seed) => executeScenario(seed, fixture, scenario),
+    cleanup: () => cleanupScenarioByRunId(runId, fixture),
+  })
 }
