@@ -72,3 +72,32 @@ for (const scenario of equipmentMutationScenarios) {
     }
   })
 }
+
+const installationMutationScenarios = [
+  'PG-INST-01: POST create audit failure rolls back installation and success audit',
+  'PG-INST-02: POST implicit replacement audit failure rolls back old and new rows',
+  'PG-INST-03: Batch and POST serialize on the shared equipment-first lock',
+  'PG-INST-04: POST replacement commits before Batch eligibility revalidation',
+  'PG-INST-05: PUT removal commits before Batch eligibility revalidation',
+  'PG-INST-06: PUT audit failure rolls back removal and success audit',
+  'PG-INST-07: concurrent POST requests preserve one active revision per part',
+  'PG-INST-08: concurrent PUT requests produce one removal audit and first timestamp',
+] as const
+
+for (const scenario of installationMutationScenarios) {
+  test(scenario, async (context) => {
+    if (!process.env.DATABASE_URL) {
+      context.skip('DATABASE_URL is required; CI supplies PostgreSQL 16')
+      return
+    }
+
+    const fixture = await openSpec001EPostgresFixture()
+    try {
+      const postgresScenarioModule = await import('./helpers/spec-001-e-postgres-scenarios')
+      const result = await postgresScenarioModule.runSpec001EPostgresScenario(fixture, scenario)
+      assert.equal(result.integrityPreserved, true, JSON.stringify(result.proof))
+    } finally {
+      await fixture.close()
+    }
+  })
+}
