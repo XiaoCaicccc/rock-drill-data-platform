@@ -87,6 +87,15 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 
 ## Next
 
+### SPEC-001-E Runtime Acceptance Reconciliation
+
+- Runtime Acceptance Overall: **FAIL**; Production Manual UI Verification: **PARTIAL PASS**.
+- Local Windows Failure Path Re-verification: **BLOCKED**; existing GitHub Actions PostgreSQL 16 CI: **PASS**.
+- Failure-path A/B/C static evidence is reconciled; insufficient HTTP route and real PostgreSQL zero-residue evidence remains **OPEN**.
+- Production Mutation Lock Closure, FLOW-001, and SPEC-001-E remain **OPEN**.
+- This reconciliation does not enter SPEC-001-F or SPEC-001-G and does not close SPEC-001-E.
+- See [SPEC-001-E Runtime Acceptance](./review/SPEC-001-E-RUNTIME-ACCEPTANCE.md).
+
 1. 来源选择器：按 `record_no`、零件、日期等业务信息选择检测记录，避免第一版手工输入内部 ID。
 2. Analysis Result 实体化：建立权威分析结果对象，替代仅校验非空的 `analysis_identifiers`。
 3. Shared Query Contract：收敛 Dashboard、台账、导出之间的筛选与统计口径。
