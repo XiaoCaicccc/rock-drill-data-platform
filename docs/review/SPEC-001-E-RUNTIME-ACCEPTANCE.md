@@ -1,5 +1,69 @@
 # SPEC-001-E Target Runtime Acceptance
 
+## Failure Path Evidence Reconciliation
+
+Static reconciliation baseline: `main` HEAD `c9a7a0b6d2089a20ee296613d846fd20ce2f606d`; GitHub Actions Run `29674174594`. The CI workflow uses `postgres:16-alpine`, sets `DATABASE_URL`, applies migrations, and runs `npm test`. Existing GitHub Actions PostgreSQL 16 CI: **PASS**. Local Windows Failure Path Re-verification: **BLOCKED**; no further local environment troubleshooting was attempted.
+
+| Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Run 29674174594 | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts` — `timestamp rejects a date-time without an offset`; `tests/spec-001-e-service.test.ts` — parameterized `service rejects ${name} without trusting caller validation` | contract / service | No | Yes: `INVALID_REQUEST` | Service mock only; no real PG residue proof | Service mock only; no real PG residue proof | Service mock has `writes.audits === 0` | No dedicated PG scenario | Included in `npm test`; no dedicated PG scenario | **PARTIAL** |
+| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts` — `batch rejects a duplicate normalized revision and parameter tuple`; `tests/spec-001-e-service.test.ts` — `service rejects a duplicate tuple before opening a transaction`; `tests/spec-001-e-postgres.test.ts` — `a rejected multi-item batch rolls back record, items, and success audit` | contract / service / PostgreSQL integration | No route-level assertion found | Yes: `DUPLICATE_MEASUREMENT` | PG expected `committedRecords: 0` | PG expected `committedItems: 0` | PG expected `successAudits: 0` | Yes, through CI `postgres:16-alpine` | Yes | **PARTIAL** |
+| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts` — `business integrity rejects a revision that is not installed`; `business integrity rejects a revision installed on another equipment`; `business integrity rejects an installation removed at the inspection instant` | service | No | Yes: `INSTALLATION_NOT_ELIGIBLE` | Mock fixture only; no dedicated PG residue proof | Mock fixture only; no dedicated PG residue proof | Failure-path mock has no audit write | No dedicated PG scenario for these inputs | Service tests included in `npm test`; no dedicated PG scenario | **PARTIAL** |
+
+### Failure-path requirement mapping
+
+- A: contract/service evidence proves rejection and no mocked writes, but not the complete HTTP 400 plus real PostgreSQL zero-residue chain. **OPEN**.
+- B: code, service no-write behavior, and PostgreSQL 16 atomic rollback counts are evidenced; route HTTP 409 is not asserted by the identified tests. **OPEN**.
+- C: service rejection cases and code are evidenced; corresponding PostgreSQL 16 zero-residue integration evidence is not identified. **OPEN**.
+- Service mocks are not treated as PostgreSQL evidence. Error-code assertions are not treated as exact HTTP-status assertions.
+
+## Production Manual UI Verification
+
+Result: **PARTIAL PASS**
+
+Completed manual page verification covered five-role permission and account-switch isolation; unauthenticated access and logout session invalidation; successful Inspector and Quality Manager record creation; cross-creator reads by Admin, Inspector, and Quality Manager; Engineer and Viewer access restrictions; export permission and filtered export; batch number, record number, date, and combined filters; empty data, invalid characters, zero values, metadata, dates, and equipment switching; historical installation-time filtering; and the absence of edit/delete entry points for inspection records.
+
+The following production records are permanently retained and were not cleaned up:
+
+- `JC-20260719-001`
+- `JC-20260719-002`
+- `JC-20260719-003`
+- `JC-20260719-003` with batch number `S1E-QM-20260720-01`
+
+These are permanent production acceptance records. No cleanup is to be performed, no existing production history is to be modified, and no new successful production test record is to be created for this reconciliation.
+
+## Deferred Issues
+
+All issues below are **Deferred to a future approved SPEC**:
+
+| ID | Issue | Status |
+| --- | --- | --- |
+| UI-01 | Detection business date is offset by one day | **Known business defect; High priority; OPEN** |
+| UI-02 | Future-date submission failure has no page feedback | Deferred to a future approved SPEC |
+| UI-03 | Inspection ledger has no detail entry point | Deferred to a future approved SPEC |
+| UI-04 | Audit log has no frontend entry point | Deferred to a future approved SPEC |
+| UI-05 | Inspector field is editable but has no effective behavior | Deferred to a future approved SPEC |
+| UI-06 | Missing inspection date message is inaccurate | Deferred to a future approved SPEC |
+| UI-07 | Historical-time unavailable-installation message is inaccurate | Deferred to a future approved SPEC |
+| UI-08 | Inspector can see the export button | Deferred to a future approved SPEC |
+| UI-09 | Engineer can enter the ledger shell but sees only empty results | Deferred to a future approved SPEC |
+| UI-10 | Horizontal table usability is poor with 247 parameters | Deferred to a future approved SPEC |
+| UI-11 | Menu pages do not have independent URLs | Deferred to a future approved SPEC |
+| UI-12 | Back navigation after logout shows a cached page shell | Deferred to a future approved SPEC |
+| UI-13 | Search does not support equipment number and does not explain search scope | Deferred to a future approved SPEC |
+
+UI-01 additionally involves frozen business time semantics and record-number dates. Whether SPEC-001-E may close with this defect requires explicit risk acceptance during Closure; recording deferral is not risk acceptance. UI-01 must not be marked PASS, Fixed, or Resolved.
+
+## Final Status
+
+- Production Manual UI Verification: **PARTIAL PASS**
+- Local Windows Failure Path Re-verification: **BLOCKED**
+- Existing PostgreSQL 16 CI: **PASS**
+- Production Mutation Lock Closure: **OPEN**
+- Runtime Acceptance Overall: **FAIL**
+- FLOW-001: **OPEN**
+- SPEC-001-E: **OPEN**
+
 - 验收日期：2026-07-17（Asia/Shanghai）
 - Railway environment：`production`
 - 应用公开域名：`rock-drill-data-platform-production.up.railway.app`
