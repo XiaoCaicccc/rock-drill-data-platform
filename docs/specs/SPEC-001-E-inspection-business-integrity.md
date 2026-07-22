@@ -1,7 +1,10 @@
 # SPEC-001-E 检测业务完整性（Inspection Business Integrity）
 
-- 状态：设计完成 / 尚未实施
-- 阻塞问题：`FLOW-001`
+- 状态：CLOSED WITH ACCEPTED RISKS
+- Closure 文档：`docs/review/SPEC-001-E-CLOSURE.md`
+- 残余风险：Direct Route handler automation 未实现；UI-01 OPEN / DEFERRED
+
+> The design-era analysis below is retained for traceability. Current status and Closure decision are authoritative in [SPEC-001-E Formal Closure](../review/SPEC-001-E-CLOSURE.md).
 - 设计基线：2026-07-16
 - 依赖：已冻结的 SPEC-001-A 授权与 Data Scope 规则
 - 证据来源：`docs/review/SPEC-001-REMAINING-BLOCKERS-REVIEW.md`、`docs/CURRENT_STATE.md`、`docs/HANDOFF.md`、`prisma/schema.prisma`

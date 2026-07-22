@@ -62,7 +62,7 @@ Runtime Verification：Deferred / Blocked
 
 ## Review Status
 
-状态：BLOCKED
+状态：SPEC-001-E CLOSED WITH ACCEPTED RISKS；SPEC-001 overall OPEN
 
 原因：
 
@@ -74,7 +74,7 @@ SPEC-001 Review Audit Remaining Blocking Issues：
 
 说明：
 
-SPEC-001-E、SPEC-001-F、SPEC-001-G 均尚未开始实施。这些剩余问题需要通过对应修复 SPEC 关闭后，才能重新执行 SPEC-001 Closure。
+SPEC-001-E 已通过 Formal Closure 关闭并保留接受风险；SPEC-001-F、SPEC-001-G 尚未开始实施，SPEC-001 overall 仍保持 OPEN。
 
 Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUTH-002 已通过 SPEC-001-D 关闭；其余 Blocking Issues 不得提前标记为已修复。
 
@@ -89,18 +89,18 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 
 ### SPEC-001-E Runtime Acceptance Reconciliation
 
-- Failure Path Evidence Completion: **PASS under accepted evidence boundary**; latest CI Run `29884072451` passed on PostgreSQL 16.
+- SPEC-001-E Formal Closure: **CLOSED WITH ACCEPTED RISKS**; Closure baseline `19cc4c2a58e93e9b80937d5b91a03c10ac6b6c1b`; evidence implementation CI Run `29886001299` passed on PostgreSQL 16.
 - Added contract/service evidence, Batch Route mapping review, and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
 - No production business code, permissions, Batch contract, time semantics, numbering rules, Schema, Migration, production data, or production deployment was changed.
 - Product Owner accepted the evidence boundary for SPEC-001-E Closure on 2026-07-22: direct Route handler automation is not implemented; contract/service tests, Route mapping review, and PostgreSQL 16 CI are the accepted combination.
 - Product Owner accepted UI-01 deferral to a future approved SPEC, including its date-filtering, record-number-date, and traceability risks; existing production history must not be modified.
-- Failure Paths A/B/C: **PASS under accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED**. Runtime Acceptance Overall remains **FAIL** and SPEC-001-E remains **OPEN**.
+- Failure Paths A/B/C: **PASS under accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED**.
 
-- Runtime Acceptance Overall: **FAIL**; Production Manual UI Verification: **PARTIAL PASS**.
+- Runtime Acceptance Overall: **PASS WITH ACCEPTED RISKS**; Production Manual UI Verification: **PARTIAL PASS**.
 - Local Windows Failure Path Re-verification: **BLOCKED**; existing GitHub Actions PostgreSQL 16 CI: **PASS**.
 - Failure-path A/B/C evidence is reconciled by accepted contract/service/Route mapping review and PostgreSQL 16 CI evidence.
-- Production Mutation Lock Closure: **READY FOR FINAL CLOSURE REVIEW**; FLOW-001 and SPEC-001-E remain **OPEN**.
-- This reconciliation does not enter SPEC-001-F or SPEC-001-G and does not close SPEC-001-E.
+- Production Mutation Lock Closure: **CLOSED**; FLOW-001: **CLOSED WITH ACCEPTED RISKS**; SPEC-001-E: **CLOSED WITH ACCEPTED RISKS**.
+- This Closure does not enter SPEC-001-F or SPEC-001-G. SPEC-001-F is the next authorized stage.
 - See [SPEC-001-E Runtime Acceptance](./review/SPEC-001-E-RUNTIME-ACCEPTANCE.md).
 
 1. 来源选择器：按 `record_no`、零件、日期等业务信息选择检测记录，避免第一版手工输入内部 ID。

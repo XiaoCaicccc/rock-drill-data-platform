@@ -1,5 +1,7 @@
 # SPEC-001-E Phase 6 验证证据
 
+> This is a historical Phase 6 verification snapshot. Its earlier pre-Closure status is retained as historical evidence and superseded for current status by [SPEC-001-E Formal Closure](./SPEC-001-E-CLOSURE.md).
+
 - 验证日期：2026-07-17（Asia/Shanghai）
 - 验证范围：SPEC-001-E Phase 6 PostgreSQL Integration 与并发验证
 - 验证基线 Commit：`f39923e`
