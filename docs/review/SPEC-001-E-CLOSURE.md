@@ -82,6 +82,12 @@ SPEC-001-E business integrity objectives are complete. This Closure is based on 
 - Result: PARTIAL PASS
 - Five-role authorization, account-switch isolation, logout invalidation, successful Inspector and Quality Manager creation, cross-creator reads, export restrictions, filters, empty/invalid/zero-value inputs, historical installation filtering, and inspection-record immutability were verified.
 - Manual UI verification does not claim complete end-to-end coverage of every backend HTTP status.
+- Inspection Detail frontend entry: **NOT IMPLEMENTED**
+- Inspection Detail backend API: **EXISTS**
+- Audit frontend entry: **NOT IMPLEMENTED**
+- Audit backend API: **EXISTS**
+- Direct backend HTTP statuses were not all manually proven through UI.
+- Result remains **PARTIAL PASS**; this is not a complete E2E PASS.
 
 ## 6. UI-01 Explicit Accepted Risk
 
@@ -98,11 +104,49 @@ SPEC-001-E business integrity objectives are complete. This Closure is based on 
 
 UI-02 through UI-13 remain deferred to future approved SPEC work. They do not block this Closure and are not automatically assigned to SPEC-001-F, SPEC-001-G, or SPEC-002.
 
+| ID | Classification | Status | Closure disposition |
+| --- | --- | --- | --- |
+| UI-02 | usability | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-03 | navigation | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-04 | observability | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-05 | correctness | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-06 | usability | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-07 | correctness | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-08 | authorization UX | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-09 | authorization UX | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-10 | usability | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-11 | navigation | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-12 | authorization UX | DEFERRED | Does not block Closure; future approved SPEC required |
+| UI-13 | search | DEFERRED | Does not block Closure; future approved SPEC required |
+
 ## 8. Production Records
 
-The existing production acceptance records and their audits remain permanently retained. No cleanup, rollback, or modification was performed because of UI-01 or this Closure.
+The following production acceptance records and corresponding audits remain permanently retained:
 
-## 9. Final Status Transition
+- `JC-20260719-001`
+- `JC-20260719-002`
+- `JC-20260719-003`
+
+They must not be cleaned up, rolled back, deleted, or modified because of UI-01, record-number dates, or this Closure. No new production acceptance record is created by this Closure.
+
+## 9. CI Evidence and Authority Boundary
+
+### Evidence implementation baseline
+
+- PR #4 merge commit: `19cc4c2a58e93e9b80937d5b91a03c10ac6b6c1`
+- PR #4 head: `c0c4942900ef41094d4d0cef6f697e35202b29b4`
+- Evidence implementation CI Run `29886001299`: PASS
+- Railway deployment of PR #4 merge: user-confirmed SUCCESS
+
+### Closure PR validation
+
+- Initial Closure draft commit: `668bd9b0e88220e80b7dc899266ecedf83dde78a`
+- Initial Closure draft CI Run `29886925566`: PASS
+- The latest Closure PR head remains subject to the GitHub required CI check.
+
+These status transitions become authoritative only after this Closure PR is merged into `main` and the deployment succeeds.
+
+## 10. Final Status Transition
 
 - Historical Integrity Audit: PASS
 - Failure Path A: PASS under accepted evidence boundary
@@ -119,6 +163,13 @@ The existing production acceptance records and their audits remain permanently r
 - SPEC-001-G: NOT STARTED
 - SPEC-002: NOT STARTED
 
-## 10. Next Authorized Stage
+## 11. Next Authorized Stage
 
-SPEC-001-F is the next authorized stage. This Closure does not start SPEC-001-F, SPEC-001-G, or SPEC-002. Any future work requires its own approved scope and Closure process.
+SPEC-001-F is the next authorized stage only after all of the following are complete:
+
+1. This Closure PR is merged into `main`.
+2. Required GitHub CI passes.
+3. Railway deployment succeeds.
+4. Main status documents show SPEC-001-E `CLOSED WITH ACCEPTED RISKS`.
+
+Before those conditions, SPEC-001-E remains OPEN in `main`, and SPEC-001-F, SPEC-001-G, and SPEC-002 remain NOT STARTED. This Closure PR does not start any of them.
