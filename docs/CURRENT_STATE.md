@@ -89,6 +89,10 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 
 ### SPEC-001-E Runtime Acceptance Reconciliation
 
+- Failure Path Evidence Completion: **IMPLEMENTED / AWAITING CI** on `test/spec-001-e-failure-path-evidence`.
+- Added route-contract evidence and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
+- No production business code, permissions, Batch contract, time semantics, numbering rules, Schema, Migration, production data, or production deployment was changed.
+
 - Runtime Acceptance Overall: **FAIL**; Production Manual UI Verification: **PARTIAL PASS**.
 - Local Windows Failure Path Re-verification: **BLOCKED**; existing GitHub Actions PostgreSQL 16 CI: **PASS**.
 - Failure-path A/B/C static evidence is reconciled; insufficient HTTP route and real PostgreSQL zero-residue evidence remains **OPEN**.

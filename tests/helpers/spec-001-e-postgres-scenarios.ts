@@ -396,6 +396,71 @@ async function rollbackScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
   }
 }
 
+async function missingOffsetResidueScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const input = requestFor(seed)
+  input.record.inspection_date = input.record.inspection_date.slice(0, 19)
+  await assert.rejects(
+    createInspectionBatch(input, { userId: seed.user.id }, { db: fixture.prisma }),
+    (error: unknown) => error instanceof InspectionDomainError
+      && error.status === 400
+      && error.code === 'INVALID_REQUEST',
+  )
+  const result = await counts(seed, fixture)
+  return {
+    ...result,
+    integrityPreserved: result.committedRecords === 0
+      && result.committedItems === 0
+      && result.successAudits === 0,
+    proof: { rejectedBeforeTransaction: true, deltas: result },
+  }
+}
+
+async function invalidInstallationResidueScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
+  const cases: BatchInspectionRequest[] = [
+    requestFor(seed, [{
+      part_revision_id: seed.replacementRevision.id,
+      param_item_id: seed.parameter.id,
+      value_number: 5,
+      value_text: null,
+    }]),
+  ]
+  const otherEquipment = await fixture.prisma.equipment.create({
+    data: {
+      machine_no: `OTHER${scenarioSuffix(fixture.runId)}`,
+      model: 'SPEC-001-E',
+      created_by: seed.user.id,
+    },
+  })
+  const otherEquipmentInput = requestFor(seed)
+  otherEquipmentInput.record.equipment_id = otherEquipment.id
+  cases.push(otherEquipmentInput)
+  await fixture.prisma.equipment_part_installation.update({
+    where: { id: seed.installation.id },
+    data: { removed_at: seed.inspectionDate, status: 'removed' },
+  })
+  cases.push(requestFor(seed))
+
+  for (const input of cases) {
+    await assert.rejects(
+      createInspectionBatch(input, { userId: seed.user.id }, { db: fixture.prisma }),
+      (error: unknown) => error instanceof InspectionDomainError
+        && error.status === 409
+        && error.code === 'INSTALLATION_NOT_ELIGIBLE',
+    )
+  }
+  const result = await counts(seed, fixture)
+  return {
+    ...result,
+    integrityPreserved: result.committedRecords === 0
+      && result.committedItems === 0
+      && result.successAudits === 0,
+    proof: {
+      cases: ['never-installed revision', 'installed on another equipment', 'removed at inspection instant'],
+      deltas: result,
+    },
+  }
+}
+
 async function recordNumberScenario(seed: Seed, fixture: Spec001EPostgresFixture) {
   const first = requestFor(seed)
   first.record.batch_no = `${seed.user.id}-1`
@@ -1266,6 +1331,8 @@ async function executeScenario(
   if (scenario.includes('concurrent equipment machine_no')) return concurrentMachineNumberScenario(seed, fixture)
   if (scenario.includes('installation removal')) return removalScenario(seed, fixture)
   if (scenario.includes('replacement')) return replacementScenario(seed, fixture)
+  if (scenario.includes('missing RFC3339 offset')) return missingOffsetResidueScenario(seed, fixture)
+  if (scenario.includes('invalid installation at inspection time')) return invalidInstallationResidueScenario(seed, fixture)
   if (scenario.includes('rolls back')) return rollbackScenario(seed, fixture)
   if (scenario.includes('record_no')) return recordNumberScenario(seed, fixture)
   assert.fail(`Unknown SPEC-001-E PostgreSQL scenario: ${scenario}`)
