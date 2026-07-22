@@ -89,7 +89,7 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 
 ### SPEC-001-E Runtime Acceptance Reconciliation
 
-- SPEC-001-E Formal Closure: **CLOSED WITH ACCEPTED RISKS**; Closure baseline `19cc4c2a58e93e9b80937d5b91a03c10ac6b6c1b`; latest PR-head CI Run `29886001299` passed on PostgreSQL 16.
+- SPEC-001-E Formal Closure: **CLOSED WITH ACCEPTED RISKS**; Closure baseline `19cc4c2a58e93e9b80937d5b91a03c10ac6b6c1b`; evidence implementation CI Run `29886001299` passed on PostgreSQL 16.
 - Added contract/service evidence, Batch Route mapping review, and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
 - No production business code, permissions, Batch contract, time semantics, numbering rules, Schema, Migration, production data, or production deployment was changed.
 - Product Owner accepted the evidence boundary for SPEC-001-E Closure on 2026-07-22: direct Route handler automation is not implemented; contract/service tests, Route mapping review, and PostgreSQL 16 CI are the accepted combination.

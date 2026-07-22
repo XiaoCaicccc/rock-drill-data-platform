@@ -83,7 +83,7 @@ Current authoritative Closure: [SPEC-001-E Formal Closure](./SPEC-001-E-CLOSURE.
 
 Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
 
-Prior full validation before the presentation-only documentation fix: GitHub Actions Run `29884924508` — PASS. The current PR head remains subject to the GitHub required CI check.
+Prior full validation before the presentation-only documentation fix: GitHub Actions Run `29884924508` — PASS. The corresponding PR #4 final head was subsequently validated by GitHub Actions Run `29886001299` — PASS.
 
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**
