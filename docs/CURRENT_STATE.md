@@ -92,6 +92,9 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 - Failure Path Evidence Completion: **IMPLEMENTED / AWAITING CI** on `test/spec-001-e-failure-path-evidence`.
 - Added route-contract evidence and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
 - No production business code, permissions, Batch contract, time semantics, numbering rules, Schema, Migration, production data, or production deployment was changed.
+- Product Owner accepted the evidence boundary for SPEC-001-E Closure on 2026-07-22: direct Route handler automation is not implemented; contract/service tests, Route mapping review, and PostgreSQL 16 CI are the accepted combination.
+- Product Owner accepted UI-01 deferral to a future approved SPEC, including its date-filtering, record-number-date, and traceability risks; existing production history must not be modified.
+- Failure Paths A/B/C: **IMPLEMENTED / AWAITING LATEST CI**. Runtime Acceptance Overall remains **FAIL** and SPEC-001-E remains **OPEN**.
 
 - Runtime Acceptance Overall: **FAIL**; Production Manual UI Verification: **PARTIAL PASS**.
 - Local Windows Failure Path Re-verification: **BLOCKED**; existing GitHub Actions PostgreSQL 16 CI: **PASS**.
