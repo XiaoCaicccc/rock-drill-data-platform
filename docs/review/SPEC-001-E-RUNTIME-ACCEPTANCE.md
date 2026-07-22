@@ -2,13 +2,13 @@
 
 ## Failure Path Evidence Reconciliation
 
-Static reconciliation baseline: `main` HEAD `c9a7a0b6d2089a20ee296613d846fd20ce2f606d`; GitHub Actions Run `29674174594`. The CI workflow uses `postgres:16-alpine`, sets `DATABASE_URL`, applies migrations, and runs `npm test`. Existing GitHub Actions PostgreSQL 16 CI: **PASS**. Local Windows Failure Path Re-verification: **BLOCKED**; no further local environment troubleshooting was attempted.
+Latest final reconciliation evidence: GitHub Actions Run `29884072451` (Run 53, job `88810890527`) completed successfully. The CI workflow uses `postgres:16-alpine`, sets `DATABASE_URL`, applies migrations, and runs `npm test`; TypeScript check, lint, and build also passed. Historical Run `29674174594` remains retained as prior evidence but is not the latest A/B/C status source. Local Windows PostgreSQL verification remains unavailable; no further local environment troubleshooting was attempted.
 
-| Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Run 29674174594 | Evidence |
+| Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Latest CI Run 29884072451 | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `missing RFC3339 offset leaves no PostgreSQL residue`; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INVALID_REQUEST` | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | Dedicated PostgreSQL 16 scenario added | Awaiting latest CI | **IMPLEMENTED / AWAITING LATEST CI** |
-| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; existing PostgreSQL rollback scenario; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `DUPLICATE_MEASUREMENT` | PG expected `committedRecords: 0` | PG expected `committedItems: 0` | PG expected `successAudits: 0` | Existing PostgreSQL 16 rollback evidence | Awaiting latest CI | **IMPLEMENTED / AWAITING LATEST CI** |
-| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `invalid installation at inspection time leaves no PostgreSQL residue`; Batch Route mapping code review | service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INSTALLATION_NOT_ELIGIBLE` | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | Dedicated PostgreSQL 16 scenario added | Awaiting latest CI | **IMPLEMENTED / AWAITING LATEST CI** |
+| A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `missing RFC3339 offset leaves no PostgreSQL residue`; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INVALID_REQUEST` | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | Dedicated PostgreSQL 16 scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; existing PostgreSQL rollback scenario; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `DUPLICATE_MEASUREMENT` | `committedRecords = 0` | `committedItems = 0` | `successAudits = 0` | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `invalid installation at inspection time leaves no PostgreSQL residue`; Batch Route mapping code review | service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INSTALLATION_NOT_ELIGIBLE` | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
 
 ### Failure-path requirement mapping
 
@@ -32,9 +32,9 @@ The previous source-matching test was removed because it did not invoke `POST`, 
 - The successor SPEC must define the business timezone and cover UTC cross-day boundary acceptance tests.
 - UI-01 must not be marked Fixed, Resolved, or PASS by this acceptance.
 
-- A: contract/service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenario are implemented; awaiting latest CI. **IMPLEMENTED / AWAITING LATEST CI**.
-- B: contract/service evidence, reviewed route mapping, and existing PostgreSQL 16 atomic rollback counts are implemented; awaiting latest CI. **IMPLEMENTED / AWAITING LATEST CI**.
-- C: service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenarios are implemented; awaiting latest CI. **IMPLEMENTED / AWAITING LATEST CI**.
+- A: contract/service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenario passed in Run 29884072451. **PASS under accepted evidence boundary**.
+- B: contract/service evidence, reviewed route mapping, and existing PostgreSQL 16 atomic rollback counts passed in Run 29884072451. **PASS under accepted evidence boundary**.
+- C: service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenarios passed in Run 29884072451. **PASS under accepted evidence boundary**.
 - Service mocks are not treated as PostgreSQL evidence. Error-code assertions are not treated as exact HTTP-status assertions.
 
 ## Production Manual UI Verification
@@ -76,12 +76,12 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 
 ## Final Status
 
-Failure Path evidence preparation records the accepted boundary above and keeps A/B/C at **IMPLEMENTED / AWAITING LATEST CI** until the new HEAD completes CI. No failure path is marked PASS by this change.
+Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
 
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**
 - Existing PostgreSQL 16 CI: **PASS**
-- Production Mutation Lock Closure: **OPEN**
+- Production Mutation Lock Closure: **READY FOR FINAL CLOSURE REVIEW**
 - Runtime Acceptance Overall: **FAIL**
 - FLOW-001: **OPEN**
 - SPEC-001-E: **OPEN**
@@ -92,7 +92,7 @@ Failure Path evidence preparation records the accepted boundary above and keeps 
 - Railway 部署 commit：`3547c96e8cc50ec84467338242e9f700d717be38`
 - Runtime Acceptance Overall：**FAIL**
 - Historical Integrity Audit：**PASS**
-- Production Mutation Lock Closure：**OPEN**
+- Production Mutation Lock Closure：**READY FOR FINAL CLOSURE REVIEW**
 - SPEC-001-E：**OPEN**
 - FLOW-001：**OPEN**
 
