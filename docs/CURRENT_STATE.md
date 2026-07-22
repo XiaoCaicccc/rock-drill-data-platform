@@ -74,7 +74,9 @@ SPEC-001 Review Audit Remaining Blocking Issues：
 
 ## SPEC-001-F Report Publication Consistency
 
-- SPEC-001-F: **DESIGN FROZEN / IMPLEMENTATION NOT STARTED**
+Phase 2 status update: **COMPLETE** for the report mutation service and service-level tests. Route integration and PostgreSQL concurrency evidence remain pending. REPORT-001 remains **OPEN / BLOCKING**.
+
+- SPEC-001-F: **PHASE 2 IMPLEMENTED / ROUTE INTEGRATION NOT STARTED**
 - REPORT-001: **OPEN / BLOCKING**
 - Phase 0 Current-State Audit: **COMPLETE**
 - Phase 1 Design Freeze: **COMPLETE**

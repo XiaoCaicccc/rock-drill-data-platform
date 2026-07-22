@@ -1,6 +1,6 @@
 # SPEC-001-F Report Publication Consistency
 
-- Status: DESIGN FROZEN / IMPLEMENTATION NOT STARTED
+- Status: DESIGN FROZEN / PHASE 2 IMPLEMENTED; ROUTE INTEGRATION NOT STARTED
 - Blocking issue: REPORT-001
 - Authoritative baseline: `1ed92bbb8fcc8de2b12b6cc22d18752256028c07`
 - Current authoritative next stage: SPEC-001-F
@@ -117,6 +117,8 @@ Published invariant checks must cover current row/snapshot equality, rejection o
 The existing `updated_at`, unique snapshot `report_id`, transactions, and conditional writes are sufficient for this design. A future request for a dedicated integer version column is a separate decision and is not part of SPEC-001-F.
 
 ## Implementation Phases
+
+Phase 2 implementation status at the Phase 2 handoff: **COMPLETE** for the report mutation service and service-level tests. Route integration, lifecycle CAS integration, and PostgreSQL concurrency evidence remain pending in later phases.
 
 - Phase 1: Design Freeze and contracts — becomes COMPLETE and repository-authoritative only after this document and the Phase 0 audit are merged into `main`.
 - Phase 2: Report edit/delete service and transaction implementation — NOT STARTED.
