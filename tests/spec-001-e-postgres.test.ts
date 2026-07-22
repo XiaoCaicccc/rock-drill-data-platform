@@ -4,6 +4,10 @@ import { openSpec001EPostgresFixture } from './helpers/spec-001-e-postgres'
 
 const scenarios = [
   {
+    name: 'missing RFC3339 offset leaves no PostgreSQL residue',
+    expected: { committedRecords: 0, committedItems: 0, successAudits: 0 },
+  },
+  {
     name: 'concurrent installation removal waits and forces batch revalidation',
     expected: { committedRecords: 0, committedItems: 0, successAudits: 0 },
   },
@@ -13,6 +17,10 @@ const scenarios = [
   },
   {
     name: 'a rejected multi-item batch rolls back record, items, and success audit',
+    expected: { committedRecords: 0, committedItems: 0, successAudits: 0 },
+  },
+  {
+    name: 'invalid installation at inspection time leaves no PostgreSQL residue',
     expected: { committedRecords: 0, committedItems: 0, successAudits: 0 },
   },
   {

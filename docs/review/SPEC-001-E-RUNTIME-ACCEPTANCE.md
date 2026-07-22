@@ -2,19 +2,39 @@
 
 ## Failure Path Evidence Reconciliation
 
-Static reconciliation baseline: `main` HEAD `c9a7a0b6d2089a20ee296613d846fd20ce2f606d`; GitHub Actions Run `29674174594`. The CI workflow uses `postgres:16-alpine`, sets `DATABASE_URL`, applies migrations, and runs `npm test`. Existing GitHub Actions PostgreSQL 16 CI: **PASS**. Local Windows Failure Path Re-verification: **BLOCKED**; no further local environment troubleshooting was attempted.
+Latest final reconciliation evidence: GitHub Actions Run `29884072451` (Run 53, job `88810890527`) completed successfully. The CI workflow uses `postgres:16-alpine`, sets `DATABASE_URL`, applies migrations, and runs `npm test`; TypeScript check, lint, and build also passed. Historical Run `29674174594` remains retained as prior evidence but is not the latest A/B/C status source. Local Windows PostgreSQL verification remains unavailable; no further local environment troubleshooting was attempted.
 
-| Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Run 29674174594 | Evidence |
+| Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Latest CI Run 29884072451 | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts` — `timestamp rejects a date-time without an offset`; `tests/spec-001-e-service.test.ts` — parameterized `service rejects ${name} without trusting caller validation` | contract / service | No | Yes: `INVALID_REQUEST` | Service mock only; no real PG residue proof | Service mock only; no real PG residue proof | Service mock has `writes.audits === 0` | No dedicated PG scenario | Included in `npm test`; no dedicated PG scenario | **PARTIAL** |
-| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts` — `batch rejects a duplicate normalized revision and parameter tuple`; `tests/spec-001-e-service.test.ts` — `service rejects a duplicate tuple before opening a transaction`; `tests/spec-001-e-postgres.test.ts` — `a rejected multi-item batch rolls back record, items, and success audit` | contract / service / PostgreSQL integration | No route-level assertion found | Yes: `DUPLICATE_MEASUREMENT` | PG expected `committedRecords: 0` | PG expected `committedItems: 0` | PG expected `successAudits: 0` | Yes, through CI `postgres:16-alpine` | Yes | **PARTIAL** |
-| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts` — `business integrity rejects a revision that is not installed`; `business integrity rejects a revision installed on another equipment`; `business integrity rejects an installation removed at the inspection instant` | service | No | Yes: `INSTALLATION_NOT_ELIGIBLE` | Mock fixture only; no dedicated PG residue proof | Mock fixture only; no dedicated PG residue proof | Failure-path mock has no audit write | No dedicated PG scenario for these inputs | Service tests included in `npm test`; no dedicated PG scenario | **PARTIAL** |
+| A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `missing RFC3339 offset leaves no PostgreSQL residue`; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INVALID_REQUEST` | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | Dedicated PostgreSQL 16 scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; existing PostgreSQL rollback scenario; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `DUPLICATE_MEASUREMENT` | `committedRecords = 0` | `committedItems = 0` | `successAudits = 0` | Yes — existing rollback scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `invalid installation at inspection time leaves no PostgreSQL residue`; Batch Route mapping code review | service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INSTALLATION_NOT_ELIGIBLE` | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | Yes — dedicated three-case zero-residue scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
 
 ### Failure-path requirement mapping
 
-- A: contract/service evidence proves rejection and no mocked writes, but not the complete HTTP 400 plus real PostgreSQL zero-residue chain. **OPEN**.
-- B: code, service no-write behavior, and PostgreSQL 16 atomic rollback counts are evidenced; route HTTP 409 is not asserted by the identified tests. **OPEN**.
-- C: service rejection cases and code are evidenced; corresponding PostgreSQL 16 zero-residue integration evidence is not identified. **OPEN**.
+## Accepted Evidence Boundary
+
+- Direct Next.js Batch Route handler automation: **NOT IMPLEMENTED**.
+- Accepted evidence combination for SPEC-001-E Closure: contract tests, service tests, Batch Route mapping code review, and PostgreSQL 16 zero-residue CI evidence.
+- Accepted by: Product Owner.
+- Accepted date: 2026-07-22.
+- Acceptance scope: SPEC-001-E Closure only; this does not represent proof that direct Route handler automation exists.
+
+The previous source-matching test was removed because it did not invoke `POST`, construct a request, or inspect a real response. No source-string matching test is treated as Route HTTP evidence.
+
+## UI-01 Explicit Risk Acceptance
+
+- Known business defect: detection business date is offset by one day.
+- Priority: High.
+- Decision: defer to a future approved SPEC.
+- Accepted impact: date filtering, record-number dates, and traceability may be affected.
+- Existing production history must not be modified.
+- The successor SPEC must define the business timezone and cover UTC cross-day boundary acceptance tests.
+- UI-01 must not be marked Fixed, Resolved, or PASS by this acceptance.
+
+- A: contract/service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenario passed in Run 29884072451. **PASS under accepted evidence boundary**.
+- B: contract/service evidence, reviewed route mapping, and existing PostgreSQL 16 atomic rollback counts passed in Run 29884072451. **PASS under accepted evidence boundary**.
+- C: service evidence, reviewed route mapping, and dedicated PostgreSQL zero-residue scenarios passed in Run 29884072451. **PASS under accepted evidence boundary**.
 - Service mocks are not treated as PostgreSQL evidence. Error-code assertions are not treated as exact HTTP-status assertions.
 
 ## Production Manual UI Verification
@@ -56,10 +76,14 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 
 ## Final Status
 
+Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
+
+Prior full validation before the presentation-only documentation fix: GitHub Actions Run `29884924508` — PASS. The current PR head remains subject to the GitHub required CI check.
+
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**
 - Existing PostgreSQL 16 CI: **PASS**
-- Production Mutation Lock Closure: **OPEN**
+- Production Mutation Lock Closure: **READY FOR FINAL CLOSURE REVIEW**
 - Runtime Acceptance Overall: **FAIL**
 - FLOW-001: **OPEN**
 - SPEC-001-E: **OPEN**
@@ -70,7 +94,7 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 - Railway 部署 commit：`3547c96e8cc50ec84467338242e9f700d717be38`
 - Runtime Acceptance Overall：**FAIL**
 - Historical Integrity Audit：**PASS**
-- Production Mutation Lock Closure：**OPEN**
+- Production Mutation Lock Closure：**READY FOR FINAL CLOSURE REVIEW**
 - SPEC-001-E：**OPEN**
 - FLOW-001：**OPEN**
 
