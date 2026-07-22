@@ -26,6 +26,15 @@ export class ReportWorkflowError extends Error {
   constructor(
     message: string,
     public readonly status: 400 | 403 | 404 | 409 | 422,
+    public readonly code = status === 404
+      ? 'REPORT_NOT_FOUND'
+      : status === 409
+        ? 'REPORT_STATE_CONFLICT'
+        : status === 422
+          ? 'REPORT_SOURCE_INVALID'
+          : status === 403
+            ? 'REPORT_FORBIDDEN'
+            : 'INVALID_REQUEST',
   ) {
     super(message)
     this.name = 'ReportWorkflowError'

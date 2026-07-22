@@ -11,7 +11,7 @@
     "start": "node .next/standalone/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/report-workflow.test.ts tests/parameter-analysis.test.ts tests/inspection-filters.test.ts tests/security-hardening.test.ts tests/spec-001-e-contract.test.ts tests/spec-001-e-service.test.ts tests/spec-001-e-authorization.test.ts tests/spec-001-e-equipment-entry.test.ts tests/spec-001-e-parts-entry.test.ts tests/spec-001-e-parameters-entry.test.ts tests/spec-001-e-ui-error.test.ts tests/spec-001-e-postgres.test.ts",
+    "test": "tsx --test tests/report-workflow.test.ts tests/report-mutations.test.ts tests/parameter-analysis.test.ts tests/inspection-filters.test.ts tests/security-hardening.test.ts tests/spec-001-e-contract.test.ts tests/spec-001-e-service.test.ts tests/spec-001-e-authorization.test.ts tests/spec-001-e-equipment-entry.test.ts tests/spec-001-e-parts-entry.test.ts tests/spec-001-e-parameters-entry.test.ts tests/spec-001-e-ui-error.test.ts tests/spec-001-e-postgres.test.ts",
     "test:spec001e": "tsx --test tests/spec-001-e-contract.test.ts tests/spec-001-e-service.test.ts tests/spec-001-e-authorization.test.ts tests/spec-001-e-equipment-entry.test.ts tests/spec-001-e-parts-entry.test.ts tests/spec-001-e-parameters-entry.test.ts tests/spec-001-e-ui-error.test.ts tests/spec-001-e-postgres.test.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
