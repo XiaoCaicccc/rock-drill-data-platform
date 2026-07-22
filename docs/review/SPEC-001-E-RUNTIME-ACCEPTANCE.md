@@ -78,7 +78,7 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 
 Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
 
-Final PR head validation: GitHub Actions Run `29884924508` — PASS.
+Prior full validation before the presentation-only documentation fix: GitHub Actions Run `29884924508` — PASS. The current PR head remains subject to the GitHub required CI check.
 
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**
