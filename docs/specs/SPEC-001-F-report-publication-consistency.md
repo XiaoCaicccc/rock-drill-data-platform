@@ -41,13 +41,15 @@ Only `admin` and `quality_manager` may create, edit, delete, submit, return, or 
 
 SPEC-001-F uses existing `analysis_report.updated_at` as the optimistic concurrency value. No version column is added and no Migration is created.
 
-Edit and delete requests require `expected_updated_at`, an RFC3339 timestamp with timezone offset. A missing or invalid value returns `400 INVALID_REQUEST`; a stale value returns `409 REPORT_EDIT_CONFLICT`; a non-draft state returns `409 REPORT_STATE_CONFLICT`.
+Edit requests use `PUT /api/reports` and require `expected_updated_at` as a JSON body field. Delete requests use `DELETE /api/reports?id=<report_id>&expected_updated_at=<rfc3339>` and require `expected_updated_at` as a query parameter. Neither endpoint may obtain a missing token from a query, header, or server-side current value, and legacy requests without the token must not continue. The value is an RFC3339 timestamp with timezone offset. A missing or invalid value returns `400 INVALID_REQUEST`; a stale value returns `409 REPORT_EDIT_CONFLICT`; a non-draft state returns `409 REPORT_STATE_CONFLICT`.
+
+For edit and delete, the transaction applies this fixed decision order: invalid or missing request fields, then report existence, then current state, then stale timestamp, then mutation. Thus a non-draft report returns `REPORT_STATE_CONFLICT` even when the supplied timestamp is stale.
 
 Submit, return, and publish load both status and `updated_at`, then condition the final state write on the loaded status and timestamp. A failed condition returns `409 REPORT_STATE_CONFLICT`.
 
 ## Frozen Transaction Boundaries
 
-Edit must validate source context and released part revisions inside one transaction, then conditionally update scalar content, source context, and part-revision links and write UPDATE AuditLog using the same transaction client.
+Edit must validate source context and released part revisions inside one transaction, then conditionally update scalar content, source context, and part-revision links and write UPDATE AuditLog using the same transaction client. Every successful edit, including a link-only edit, advances `analysis_report.updated_at` and returns the committed timestamp. A failed link replacement rolls back links, timestamp, content, source context, and audit together.
 
 Delete must conditionally delete only a draft with the expected timestamp, delete its links, and write DELETE AuditLog in the same transaction.
 
@@ -116,7 +118,7 @@ The existing `updated_at`, unique snapshot `report_id`, transactions, and condit
 
 ## Implementation Phases
 
-- Phase 1: Design Freeze and contracts — COMPLETE after this document and the Phase 0 audit are committed.
+- Phase 1: Design Freeze and contracts — becomes COMPLETE and repository-authoritative only after this document and the Phase 0 audit are merged into `main`.
 - Phase 2: Report edit/delete service and transaction implementation — NOT STARTED.
 - Phase 3: Lifecycle CAS integration and error mapping — NOT STARTED.
 - Phase 4: PostgreSQL concurrency and rollback evidence — NOT STARTED.

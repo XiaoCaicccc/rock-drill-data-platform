@@ -131,6 +131,9 @@ Add a dedicated version field and require it on mutation requests.
 - Concurrency strategy: existing `updated_at` optimistic CAS.
 - Edit transaction: validate source and released revisions inside the transaction; condition on `id`, draft status, and `expected_updated_at`; update scalar fields, source context, links, and UPDATE audit atomically.
 - Delete transaction: condition on `id`, draft status, and `expected_updated_at`; delete links/report and write DELETE audit atomically.
+- Transport: PUT carries `expected_updated_at` in the JSON body; DELETE carries it in the query string. Missing tokens are not legacy-compatible.
+- Decision precedence: invalid request, not found, non-draft state, stale draft timestamp, then mutation.
+- Version advancement: every successful edit, including link-only edit, advances and returns `updated_at`; failed link replacement rolls back the complete mutation.
 - Lifecycle CAS: load status and `updated_at`; condition submit/return/publish on both values.
 - Published authority: current row remains authoritative for GET/API/UI.
 - Snapshot role: immutable publication evidence; assert equality with current row after publish.
