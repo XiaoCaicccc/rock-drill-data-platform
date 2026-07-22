@@ -1,5 +1,7 @@
 # SPEC-001-E 历史生产数据完整性只读审计
 
+> This is a historical audit snapshot. Its earlier OPEN conclusions are retained as historical facts and superseded for current status by [SPEC-001-E Formal Closure](./SPEC-001-E-CLOSURE.md).
+
 - 审计日期：2026-07-17（Asia/Shanghai）
 - Git 基线：Railway production commit `3547c96e8cc50ec84467338242e9f700d717be38`
 - 目标环境：Railway production PostgreSQL

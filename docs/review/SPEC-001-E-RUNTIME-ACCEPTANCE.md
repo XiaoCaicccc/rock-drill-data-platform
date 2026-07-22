@@ -76,6 +76,11 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 
 ## Final Status
 
+Current authoritative Closure: [SPEC-001-E Formal Closure](./SPEC-001-E-CLOSURE.md).
+
+- Closure result: **CLOSED WITH ACCEPTED RISKS**
+- Closure baseline: `19cc4c2a58e93e9b80937d5b91a03c10ac6b6c1b`
+
 Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
 
 Prior full validation before the presentation-only documentation fix: GitHub Actions Run `29884924508` — PASS. The current PR head remains subject to the GitHub required CI check.
@@ -83,10 +88,10 @@ Prior full validation before the presentation-only documentation fix: GitHub Act
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**
 - Existing PostgreSQL 16 CI: **PASS**
-- Production Mutation Lock Closure: **READY FOR FINAL CLOSURE REVIEW**
-- Runtime Acceptance Overall: **FAIL**
-- FLOW-001: **OPEN**
-- SPEC-001-E: **OPEN**
+- Production Mutation Lock Closure: **CLOSED**
+- Runtime Acceptance Overall: **PASS WITH ACCEPTED RISKS**
+- FLOW-001: **CLOSED WITH ACCEPTED RISKS**
+- SPEC-001-E: **CLOSED WITH ACCEPTED RISKS**
 
 - 验收日期：2026-07-17（Asia/Shanghai）
 - Railway environment：`production`
@@ -97,6 +102,8 @@ Prior full validation before the presentation-only documentation fix: GitHub Act
 - Production Mutation Lock Closure：**READY FOR FINAL CLOSURE REVIEW**
 - SPEC-001-E：**OPEN**
 - FLOW-001：**OPEN**
+
+> The dated runtime snapshot below is retained as historical evidence. Its earlier OPEN/FAIL conclusions are superseded for current status by [SPEC-001-E Formal Closure](./SPEC-001-E-CLOSURE.md).
 
 ## 1. 部署基线
 
