@@ -7,8 +7,8 @@ Latest final reconciliation evidence: GitHub Actions Run `29884072451` (Run 53, 
 | Scenario | Test file and exact test name | Level | Exact HTTP status asserted | Exact business code asserted | Zero `inspection_record` | Zero `inspection_data_item` | Zero successful CREATE audit | Real PostgreSQL 16 | Latest CI Run 29884072451 | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | A. Missing RFC3339 timezone offset | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `missing RFC3339 offset leaves no PostgreSQL residue`; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INVALID_REQUEST` | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | PostgreSQL delta asserted as zero | Dedicated PostgreSQL 16 scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
-| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; existing PostgreSQL rollback scenario; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `DUPLICATE_MEASUREMENT` | `committedRecords = 0` | `committedItems = 0` | `successAudits = 0` | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
-| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `invalid installation at inspection time leaves no PostgreSQL residue`; Batch Route mapping code review | service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INSTALLATION_NOT_ELIGIBLE` | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| B. Duplicate `(part_revision_id, param_item_id)` | `tests/spec-001-e-contract.test.ts`; `tests/spec-001-e-service.test.ts`; existing PostgreSQL rollback scenario; Batch Route mapping code review | contract / service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `DUPLICATE_MEASUREMENT` | `committedRecords = 0` | `committedItems = 0` | `successAudits = 0` | Yes — existing rollback scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
+| C. Installation invalid at inspection time | `tests/spec-001-e-service.test.ts`; `tests/spec-001-e-postgres.test.ts` — `invalid installation at inspection time leaves no PostgreSQL residue`; Batch Route mapping code review | service / route mapping review / PostgreSQL integration | Direct handler automation not implemented; mapping reviewed in source | Yes: `INSTALLATION_NOT_ELIGIBLE` | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | PostgreSQL delta asserted as zero for all three cases | Yes — dedicated three-case zero-residue scenario | Run 29884072451: PASS | **PASS under accepted evidence boundary** |
 
 ### Failure-path requirement mapping
 
@@ -77,6 +77,8 @@ UI-01 additionally involves frozen business time semantics and record-number dat
 ## Final Status
 
 Failure Path final reconciliation records Run `29884072451` as passing PostgreSQL 16 CI. A/B/C are **PASS under the accepted evidence boundary**. Direct Route handler automation remains **NOT IMPLEMENTED** and is not represented as PASS.
+
+Final PR head validation: GitHub Actions Run `29884924508` — PASS.
 
 - Production Manual UI Verification: **PARTIAL PASS**
 - Local Windows Failure Path Re-verification: **BLOCKED**

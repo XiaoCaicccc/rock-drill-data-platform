@@ -90,7 +90,7 @@ Review Audit 不否定 SPEC-001 MVP 的核心功能完成状态。AUTH-001、AUT
 ### SPEC-001-E Runtime Acceptance Reconciliation
 
 - Failure Path Evidence Completion: **PASS under accepted evidence boundary**; latest CI Run `29884072451` passed on PostgreSQL 16.
-- Added route-contract evidence and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
+- Added contract/service evidence, Batch Route mapping review, and PostgreSQL zero-residue scenarios for Failure Paths A and C; reconciled B against existing rollback evidence.
 - No production business code, permissions, Batch contract, time semantics, numbering rules, Schema, Migration, production data, or production deployment was changed.
 - Product Owner accepted the evidence boundary for SPEC-001-E Closure on 2026-07-22: direct Route handler automation is not implemented; contract/service tests, Route mapping review, and PostgreSQL 16 CI are the accepted combination.
 - Product Owner accepted UI-01 deferral to a future approved SPEC, including its date-filtering, record-number-date, and traceability risks; existing production history must not be modified.
