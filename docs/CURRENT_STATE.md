@@ -72,6 +72,16 @@ SPEC-001 Review Audit Remaining Blocking Issues：
 - REPORT-001 → SPEC-001-F Report Publication Consistency
 - DATA-001 + ANALYSIS-001 → SPEC-001-G Quality Metrics Correctness
 
+## SPEC-001-F Report Publication Consistency
+
+- SPEC-001-F: **DESIGN FROZEN / IMPLEMENTATION NOT STARTED**
+- REPORT-001: **OPEN / BLOCKING**
+- Phase 0 Current-State Audit: **COMPLETE**
+- Phase 1 Design Freeze: **COMPLETE**
+- Phase 2 implementation: **NOT STARTED**
+- Frozen design: existing `analysis_report.updated_at` optimistic CAS, required `expected_updated_at` for edit/delete, lifecycle status plus timestamp CAS, Current Row authoritative reads, immutable publication snapshot evidence, and no Migration.
+- No production business code, tests, Prisma Schema, Migration, workflow, production data, or Railway settings were changed by the design-freeze phase.
+
 说明：
 
 SPEC-001-E 已通过 Formal Closure 关闭并保留接受风险；SPEC-001-F、SPEC-001-G 尚未开始实施，SPEC-001 overall 仍保持 OPEN。
