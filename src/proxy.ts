@@ -33,5 +33,3 @@ export default auth((req) => {
 
   return
 }) as any
-
-export { auth }
